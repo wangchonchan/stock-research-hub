@@ -2,6 +2,7 @@
 """
 HTML Generator
 根据 JSON 研究数据动态生成 HTML 网页
+保持与原始 FIGR 分析页面相同的格式和样式
 """
 
 import json
@@ -9,8 +10,17 @@ from datetime import datetime
 from pathlib import Path
 
 
-def load_research_data(filepath: str = "research_data_FIGR.json") -> dict:
+def load_research_data(filepath: str = None) -> dict:
     """加载研究数据"""
+    if filepath is None:
+        # 尝试找到最新的 research_data 文件
+        import glob
+        files = glob.glob("research_data_*.json")
+        if files:
+            filepath = max(files, key=lambda f: Path(f).stat().st_mtime)
+        else:
+            filepath = "research_data_FIGR.json"
+    
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -30,29 +40,27 @@ def get_default_data() -> dict:
             "change_percent": -1.31
         },
         "consensus": {
-            "total_analysts": 22,
-            "buy_percent": 100,
             "target_price": 56.89,
-            "upside_potential": 65
+            "upside_potential": 65,
+            "number_of_analysts": 22
         },
         "fundamentals": {
-            "q4_revenue": 160000000,
-            "yoy_growth": 90.7,
+            "revenue": 507000000,
             "gross_margin": 93,
             "net_margin": 9.4,
-            "cash_reserve": 1200000000
+            "book_value": 12.5
         },
         "technicals": {
-            "osc_20": {"value": 85, "status": "严重超买"},
-            "bias_24": {"value": 72, "status": "超买"},
-            "cci_14": {"value": 68, "status": "超买"},
             "ma_5": 36.30,
-            "ma_60": 44.92
+            "ma_20": 32.79,
+            "ma_60": 44.92,
+            "rsi": 68
         },
         "strategy": {
-            "stage_1": {"triggered": True, "status": "已触发", "price_range": "34.42 - 35.6"},
-            "stage_2": {"triggered": False, "status": "监控中", "price_range": "37.6 - 38.0"},
-            "stage_3": {"triggered": False, "status": "目标中", "price_range": "39.5 - 40.0"}
+            "stage_1": {"triggered": True, "status": "已触发", "price_range": "34.42 - 35.6", "quantity": "基础舱", "target": "保本"},
+            "stage_2": {"triggered": False, "status": "监控中", "price_range": "37.6 - 38.0", "quantity": "部分仓位", "target": "首次获利"},
+            "stage_3": {"triggered": False, "status": "目标中", "price_range": "39.5 - 40.0", "quantity": "剩余仓位", "target": "完成清仓"},
+            "risk_control": {"stop_loss": 32.80, "time_trigger": 90}
         }
     }
 
@@ -78,7 +86,7 @@ def get_stage_badge_color(status: str) -> tuple:
 
 
 def generate_html(data: dict) -> str:
-    """生成完整的 HTML 页面"""
+    """生成完整的 HTML 页面 - 与原始 FIGR 分析页面格式一致"""
     
     price = data.get("price", {})
     consensus = data.get("consensus", {})
@@ -90,12 +98,19 @@ def generate_html(data: dict) -> str:
     current_price = price.get("current_price", 0)
     stage_1_badge, stage_1_color = get_stage_badge_color(strategy.get("stage_1", {}).get("status", ""))
     
+    # 获取时间戳
+    timestamp_str = data.get("timestamp", datetime.now().isoformat())
+    try:
+        update_time = datetime.fromisoformat(timestamp_str).strftime('%Y-%m-%d %H:%M:%S')
+    except:
+        update_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{ticker} Stock Analysis - Auto Generated</title>
+    <title>{ticker} Stock Analysis</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -112,8 +127,8 @@ def generate_html(data: dict) -> str:
 
     <!-- Auto-Generated Notice -->
     <div class="auto-generated">
-        <strong>⚡ 自动生成报告</strong> - 最后更新: {datetime.fromisoformat(data.get('timestamp', datetime.now().isoformat())).strftime('%Y-%m-%d %H:%M:%S')}
-        <br/>此报告由 AI 自动调研和生成。运行 <code style="background: white; padding: 0.25rem 0.5rem; border-radius: 0.25rem;">python3 research_engine.py</code> 来更新数据。
+        <strong>⚡ 自动生成报告</strong> - 最后更新: {update_time}
+        <br/>此报告由 AI 自动调研和生成。运行 <code style="background: white; padding: 0.25rem 0.5rem; border-radius: 0.25rem;">./update.sh {ticker}</code> 来更新数据。
     </div>
 
     <!-- Header -->
@@ -141,12 +156,12 @@ def generate_html(data: dict) -> str:
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
                 <p class="text-blue-200 text-sm mb-1">分析师共识</p>
-                <p class="text-xl font-bold">{consensus.get('total_analysts', 0)}位 {consensus.get('buy_percent', 0)}%买入</p>
+                <p class="text-xl font-bold">{consensus.get('number_of_analysts', 0)}位 100%买入</p>
                 <p class="text-blue-200 text-xs">平均目标价 ${consensus.get('target_price', 0):.2f}</p>
             </div>
             <div class="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
                 <p class="text-blue-200 text-sm mb-1">上升空间</p>
-                <p class="text-xl font-bold">+{consensus.get('upside_potential', 0)}%</p>
+                <p class="text-xl font-bold">+{consensus.get('upside_potential', 0):.1f}%</p>
                 <p class="text-blue-200 text-xs">相对当前价格</p>
             </div>
             <div class="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
@@ -167,24 +182,24 @@ def generate_html(data: dict) -> str:
             </h3>
             <div class="space-y-3">
                 <div class="flex justify-between border-b pb-2">
-                    <span class="text-slate-500">Q4收入</span>
-                    <span class="font-semibold">{format_currency(fundamentals.get('q4_revenue', 0))}</span>
-                </div>
-                <div class="flex justify-between border-b pb-2">
-                    <span class="text-slate-500">同比增长</span>
-                    <span class="font-semibold text-green-600">+{fundamentals.get('yoy_growth', 0):.1f}%</span>
+                    <span class="text-slate-500">年度收入</span>
+                    <span class="font-semibold">{format_currency(fundamentals.get('revenue', 0))}</span>
                 </div>
                 <div class="flex justify-between border-b pb-2">
                     <span class="text-slate-500">毛利率</span>
-                    <span class="font-semibold">{fundamentals.get('gross_margin', 0):.0f}%+</span>
+                    <span class="font-semibold text-green-600">{fundamentals.get('gross_margin', 0):.1f}%</span>
                 </div>
                 <div class="flex justify-between border-b pb-2">
-                    <span class="text-slate-500">Q4净利率</span>
-                    <span class="font-semibold text-red-500">{fundamentals.get('net_margin', 0):.1f}%</span>
+                    <span class="text-slate-500">净利率</span>
+                    <span class="font-semibold text-orange-600">{fundamentals.get('net_margin', 0):.1f}%</span>
+                </div>
+                <div class="flex justify-between border-b pb-2">
+                    <span class="text-slate-500">ROE</span>
+                    <span class="font-semibold">{fundamentals.get('roe', 0):.1f}%</span>
                 </div>
                 <div class="flex justify-between">
-                    <span class="text-slate-500">现金储备</span>
-                    <span class="font-semibold">{format_currency(fundamentals.get('cash_reserve', 0))}</span>
+                    <span class="text-slate-500">每股净值</span>
+                    <span class="font-semibold">${fundamentals.get('book_value', 0):.2f}</span>
                 </div>
             </div>
         </div>
@@ -196,20 +211,20 @@ def generate_html(data: dict) -> str:
             </h3>
             <div class="space-y-3">
                 <div class="flex justify-between border-b pb-2">
-                    <span class="text-slate-500">OSC_20</span>
-                    <span class="badge badge-red">{technicals.get('osc_20', {}).get('value', 0)} {technicals.get('osc_20', {}).get('status', '')}</span>
+                    <span class="text-slate-500">RSI (14)</span>
+                    <span class="badge badge-red">{technicals.get('rsi', 0):.0f} 超买</span>
                 </div>
                 <div class="flex justify-between border-b pb-2">
-                    <span class="text-slate-500">BIAS_24</span>
-                    <span class="badge badge-orange">{technicals.get('bias_24', {}).get('value', 0)} {technicals.get('bias_24', {}).get('status', '')}</span>
-                </div>
-                <div class="flex justify-between border-b pb-2">
-                    <span class="text-slate-500">CCI_14</span>
-                    <span class="badge badge-orange">{technicals.get('cci_14', {}).get('value', 0)} {technicals.get('cci_14', {}).get('status', '')}</span>
+                    <span class="text-slate-500">MACD</span>
+                    <span class="font-semibold">{technicals.get('macd', 0):.4f}</span>
                 </div>
                 <div class="flex justify-between border-b pb-2">
                     <span class="text-slate-500">5日均线</span>
                     <span class="font-semibold">${technicals.get('ma_5', 0):.2f}</span>
+                </div>
+                <div class="flex justify-between border-b pb-2">
+                    <span class="text-slate-500">20日均线</span>
+                    <span class="font-semibold">${technicals.get('ma_20', 0):.2f}</span>
                 </div>
                 <div class="flex justify-between">
                     <span class="text-slate-500">60日均线</span>
@@ -279,8 +294,9 @@ def main():
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
+    ticker = data.get('ticker', 'FIGR')
     print(f"✅ HTML 已生成: {output_path}")
-    print(f"📊 数据来源: research_data_{data.get('ticker', 'FIGR')}.json")
+    print(f"📊 数据来源: research_data_{ticker}.json")
     print(f"🕐 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
