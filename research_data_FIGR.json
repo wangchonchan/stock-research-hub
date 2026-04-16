@@ -1,0 +1,84 @@
+{
+  "ticker": "FIGR",
+  "timestamp": "2026-04-16T03:04:49.047371",
+  "summary": {},
+  "fundamentals": {
+    "q4_revenue": 160000000,
+    "yoy_growth": 90.7,
+    "gross_margin": 93,
+    "net_margin": 9.4,
+    "cash_reserve": 1200000000,
+    "operating_cash_flow_growth": 92.1,
+    "q4_net_profit": 15160000,
+    "q4_net_profit_growth": 176.8,
+    "annual_revenue": 507000000,
+    "stock_buyback": 200000000
+  },
+  "technicals": {
+    "osc_20": {
+      "value": 85,
+      "status": "严重超买"
+    },
+    "bias_24": {
+      "value": 72,
+      "status": "超买"
+    },
+    "cci_14": {
+      "value": 68,
+      "status": "超买"
+    },
+    "ma_5": 36.3,
+    "ma_20": 32.79,
+    "ma_60": 44.92,
+    "bollinger_upper": 40.5,
+    "bollinger_middle": 32.79,
+    "bollinger_lower": 25.69
+  },
+  "sentiment": {},
+  "strategy": {
+    "stage_1": {
+      "triggered": true,
+      "price_range": "34.42 - 35.6",
+      "quantity": "基础舱",
+      "target": "保本",
+      "status": "已触发"
+    },
+    "stage_2": {
+      "triggered": false,
+      "price_range": "37.6 - 38.0",
+      "quantity": "部分仓位",
+      "target": "首次获利",
+      "status": "监控中"
+    },
+    "stage_3": {
+      "triggered": false,
+      "price_range": "39.5 - 40.0",
+      "quantity": "剩余仓位",
+      "target": "完成清仓",
+      "status": "目标中"
+    },
+    "risk_control": {
+      "stop_loss": 32.8,
+      "time_trigger": 90
+    }
+  },
+  "price": {
+    "current_price": 34.542,
+    "change": -0.458,
+    "change_percent": -1.31,
+    "high_52w": 42.27,
+    "low_52w": 15.2,
+    "market_cap": "2.5B",
+    "pe_ratio": 45.2,
+    "volume": "5.2M"
+  },
+  "consensus": {
+    "total_analysts": 22,
+    "buy_percent": 100,
+    "hold_percent": 0,
+    "sell_percent": 0,
+    "target_price": 56.89,
+    "upside_potential": 65
+  },
+  "updated_at": "2026-04-16T03:04:49.047449"
+}
