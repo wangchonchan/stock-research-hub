@@ -68,16 +68,17 @@ class StockResearchEngine:
     def _get_mock_price(self) -> Dict[str, Any]:
         """获取模拟价格数据"""
         return {
-            "current_price": 34.542,
-            "change": -0.458,
-            "change_percent": -1.31,
-            "high_52w": 42.27,
-            "low_52w": 15.20,
-            "market_cap": "2.5B",
-            "pe_ratio": 45.2,
-            "volume": "5.2M",
-            "avg_volume": "4.8M",
-            "dividend_yield": 0
+            "current_price": 0,
+            "change": 0,
+            "change_percent": 0,
+            "high_52w": 0,
+            "low_52w": 0,
+            "market_cap": "N/A",
+            "pe_ratio": 0,
+            "volume": "N/A",
+            "avg_volume": "N/A",
+            "dividend_yield": 0,
+            "error": "Data fetching failed"
         }
     
     def _format_market_cap(self, value: float) -> str:
@@ -129,17 +130,17 @@ class StockResearchEngine:
     def _get_mock_fundamentals(self) -> Dict[str, Any]:
         """获取模拟基本面数据"""
         return {
-            "revenue": 507000000,
-            "revenue_per_share": 15.2,
-            "gross_margin": 93,
-            "operating_margin": 12.5,
-            "net_margin": 9.4,
-            "roe": 18.5,
-            "debt_to_equity": 0.25,
-            "current_ratio": 2.1,
-            "book_value": 12.5,
-            "earnings_per_share": 0.75,
-            "forward_eps": 0.92
+            "revenue": 0,
+            "revenue_per_share": 0,
+            "gross_margin": 0,
+            "operating_margin": 0,
+            "net_margin": 0,
+            "roe": 0,
+            "debt_to_equity": 0,
+            "current_ratio": 0,
+            "book_value": 0,
+            "earnings_per_share": 0,
+            "forward_eps": 0
         }
     
     def fetch_technical_indicators(self) -> Dict[str, Any]:
@@ -181,14 +182,14 @@ class StockResearchEngine:
     def _get_mock_technicals(self) -> Dict[str, Any]:
         """获取模拟技术指标"""
         return {
-            "ma_5": 36.30,
-            "ma_20": 32.79,
-            "ma_60": 44.92,
-            "bollinger_upper": 40.50,
-            "bollinger_middle": 32.79,
-            "bollinger_lower": 25.69,
-            "rsi": 68,
-            "macd": 0.85
+            "ma_5": 0,
+            "ma_20": 0,
+            "ma_60": 0,
+            "bollinger_upper": 0,
+            "bollinger_middle": 0,
+            "bollinger_lower": 0,
+            "rsi": 0,
+            "macd": 0
         }
     
     def _calculate_rsi(self, prices, period=14) -> float:
@@ -251,10 +252,10 @@ class StockResearchEngine:
     def _get_mock_consensus(self) -> Dict[str, Any]:
         """获取模拟分析师共识"""
         return {
-            "target_price": 56.89,
-            "upside_potential": 65,
-            "number_of_analysts": 22,
-            "recommendation": "buy"
+            "target_price": 0,
+            "upside_potential": 0,
+            "number_of_analysts": 0,
+            "recommendation": "N/A"
         }
     
     def generate_strategy(self, current_price: float) -> Dict[str, Any]:
