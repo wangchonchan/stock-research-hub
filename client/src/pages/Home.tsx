@@ -3,11 +3,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Search, TrendingUp, ShieldAlert, BarChart3, Activity, Clock, X, CheckCircle2, AlertCircle } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { 
+  Loader2, Search, TrendingUp, ShieldAlert, BarChart3, 
+  Activity, Clock, X, CheckCircle2, AlertCircle, 
+  ArrowLeftRight, Info
+} from "lucide-react";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface StockData {
   ticker: string;
+  company_name: string;
+  description: string;
   timestamp: string;
   updated_at: string;
   price: {
@@ -55,13 +69,15 @@ interface HistoryItem {
   data: StockData;
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history_v3";
+const HISTORY_STORAGE_KEY = "stock_research_history_v4";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<StockData | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
+  const [isCompareOpen, setIsCompareOpen] = useState(false);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -115,9 +131,31 @@ export default function Home() {
     }
   };
 
+  const deleteHistoryItem = (id: string) => {
+    setHistory(history.filter(item => item.id !== id));
+    setSelectedForCompare(selectedForCompare.filter(sid => sid !== id));
+  };
+
+  const toggleSelectForCompare = (id: string) => {
+    if (selectedForCompare.includes(id)) {
+      setSelectedForCompare(selectedForCompare.filter(sid => sid !== id));
+    } else {
+      if (selectedForCompare.length >= 2) {
+        toast.warning("You can only compare 2 items at a time.");
+        return;
+      }
+      setSelectedForCompare([...selectedForCompare, id]);
+    }
+  };
+
+  const getCompareItems = () => {
+    return history.filter(item => selectedForCompare.includes(item.id));
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
+        {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
@@ -133,6 +171,7 @@ export default function Home() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Main Content */}
           <div className="lg:col-span-3">
             {!data && !loading && (
               <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200">
@@ -143,11 +182,18 @@ export default function Home() {
 
             {data && (
               <div className="space-y-6 animate-in fade-in duration-500">
+                {/* Insight Box */}
                 <div className="bg-blue-600 text-white rounded-2xl p-6 md:p-8 shadow-lg">
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      <h2 className="text-3xl font-bold mb-1">{data.ticker} Insight</h2>
-                      <p className="text-blue-100 opacity-80">Last Updated: {data.updated_at} (HKT)</p>
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h2 className="text-3xl font-bold">{data.ticker}</h2>
+                        <span className="text-blue-100 text-lg opacity-90">| {data.company_name}</span>
+                      </div>
+                      <p className="text-blue-100 text-sm opacity-80 mb-3 flex items-center gap-1">
+                        <Info className="h-3 w-3" /> {data.description}
+                      </p>
+                      <p className="text-blue-100 text-xs opacity-60">Last Updated: {data.updated_at} (HKT)</p>
                     </div>
                     <div className="text-right">
                       <div className="text-3xl font-bold">${data.price.current_price.toFixed(3)}</div>
@@ -174,6 +220,7 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Metrics Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <Card>
                     <CardHeader className="flex flex-row items-center gap-2">
@@ -238,6 +285,7 @@ export default function Home() {
                   </Card>
                 </div>
 
+                {/* Checklist */}
                 <Card>
                   <CardHeader className="flex flex-row items-center gap-2">
                     <ShieldAlert className="h-5 w-5 text-blue-600" />
@@ -264,6 +312,7 @@ export default function Home() {
             )}
           </div>
 
+          {/* Sidebar / History */}
           <div className="lg:col-span-1">
             <Card className="sticky top-8">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -271,20 +320,89 @@ export default function Home() {
                   <Clock className="h-5 w-5 text-slate-400" />
                   <CardTitle className="text-lg">History</CardTitle>
                 </div>
-                {history.length > 0 && <Button variant="ghost" size="sm" onClick={() => setHistory([])} className="text-xs text-slate-400 hover:text-red-500">Clear</Button>}
+                <div className="flex gap-1">
+                  {selectedForCompare.length === 2 && (
+                    <Dialog open={isCompareOpen} onOpenChange={setIsCompareOpen}>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-7 text-[10px] bg-blue-50 text-blue-600 border-blue-200">
+                          Compare
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                        <DialogHeader>
+                          <DialogTitle className="flex items-center gap-2">
+                            <ArrowLeftRight className="h-5 w-5" /> Stock Comparison
+                          </DialogTitle>
+                        </DialogHeader>
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          {getCompareItems().map((item, idx) => (
+                            <div key={item.id} className="space-y-4">
+                              <div className="p-4 bg-slate-100 rounded-xl">
+                                <h3 className="text-xl font-bold">{item.ticker}</h3>
+                                <p className="text-sm text-slate-500">{item.timestamp}</p>
+                                <p className="text-2xl font-bold mt-2">${item.price.toFixed(3)}</p>
+                              </div>
+                              <div className="space-y-2">
+                                <h4 className="font-bold text-sm border-b pb-1">Fundamentals</h4>
+                                <div className="grid grid-cols-2 text-xs gap-y-1">
+                                  <span className="text-slate-500">Revenue:</span> <span className="font-medium">{formatLargeNumber(item.data.fundamentals.revenue)}</span>
+                                  <span className="text-slate-500">YoY:</span> <span className="font-medium">{item.data.fundamentals.revenue_yoy}%</span>
+                                  <span className="text-slate-500">Gross:</span> <span className="font-medium">{item.data.fundamentals.gross_margin}%</span>
+                                  <span className="text-slate-500">Net:</span> <span className="font-medium">{item.data.fundamentals.net_margin}%</span>
+                                </div>
+                                <h4 className="font-bold text-sm border-b pb-1 mt-4">Technicals</h4>
+                                <div className="grid grid-cols-2 text-xs gap-y-1">
+                                  <span className="text-slate-500">RSI:</span> <span className="font-medium">{item.data.technicals.rsi}</span>
+                                  <span className="text-slate-500">OSC:</span> <span className="font-medium">{item.data.technicals.osc_20}</span>
+                                  <span className="text-slate-500">BIAS:</span> <span className="font-medium">{item.data.technicals.bias_24}%</span>
+                                  <span className="text-slate-500">CCI:</span> <span className="font-medium">{item.data.technicals.cci_14}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  )}
+                  {history.length > 0 && <Button variant="ghost" size="sm" onClick={() => setHistory([])} className="h-7 text-[10px] text-slate-400 hover:text-red-500">Clear</Button>}
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
                   {history.map((item) => (
-                    <div key={item.id} onClick={() => setData(item.data)} className={`p-3 rounded-xl border bg-white hover:border-blue-400 transition-all cursor-pointer ${data?.timestamp === item.data.timestamp ? 'border-blue-500 ring-1 ring-blue-500' : ''}`}>
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="font-bold text-slate-900">{item.ticker}</span>
-                        <span className="text-sm font-semibold">${item.price.toFixed(2)}</span>
+                    <div key={item.id} className="relative group">
+                      <div 
+                        onClick={() => setData(item.data)} 
+                        className={`p-3 rounded-xl border bg-white hover:border-blue-400 transition-all cursor-pointer flex items-center gap-3 ${data?.timestamp === item.data.timestamp ? 'border-blue-500 ring-1 ring-blue-500' : ''}`}
+                      >
+                        <Checkbox 
+                          checked={selectedForCompare.includes(item.id)}
+                          onCheckedChange={() => toggleSelectForCompare(item.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-4 w-4"
+                        />
+                        <div className="flex-1">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="font-bold text-slate-900">{item.ticker}</span>
+                            <span className="text-sm font-semibold">${item.price.toFixed(2)}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-400">{item.timestamp}</p>
+                        </div>
                       </div>
-                      <p className="text-[10px] text-slate-400">{item.timestamp}</p>
+                      <button 
+                        onClick={() => deleteHistoryItem(item.id)}
+                        className="absolute -top-1 -right-1 bg-white border shadow-sm rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
                     </div>
                   ))}
                 </div>
+                {history.length > 0 && (
+                  <p className="text-[10px] text-slate-400 mt-4 text-center italic">
+                    Select 2 items to compare
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine - Optimized & Robust Version
-Ensures core data (Price, RSI, OSC) is always returned even if financials fail.
+Stock Research Engine - Enhanced with Company Info
+Fetches company full name and short description along with financial data.
 """
 
 import json
@@ -18,6 +18,8 @@ class StockResearchEngine:
         self.hkt = timezone(timedelta(hours=8))
         self.data = {
             "ticker": self.ticker,
+            "company_name": "N/A",
+            "description": "N/A",
             "timestamp": datetime.now(self.hkt).isoformat(),
             "updated_at": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
             "price": {"current_price": 0, "change": 0, "change_percent": 0, "pb_ratio": "N/A"},
@@ -45,33 +47,22 @@ class StockResearchEngine:
         try:
             if len(df) < 60: return {}
             close = df['Close']
-            
-            # MA 5 & 60
             ma5 = close.rolling(window=5).mean().iloc[-1]
             ma60 = close.rolling(window=60).mean().iloc[-1]
-            
-            # OSC_20
             ma20 = close.rolling(window=20).mean()
             osc20 = (close - ma20).iloc[-1]
-            
-            # BIAS_24
             ma24 = close.rolling(window=24).mean()
             bias24 = ((close - ma24) / ma24 * 100).iloc[-1]
-            
-            # CCI_14
             tp = (df['High'] + df['Low'] + df['Close']) / 3
             ma_tp = tp.rolling(window=14).mean()
             md_tp = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean())
             cci14 = ((tp - ma_tp) / (0.015 * md_tp)).iloc[-1]
-            
-            # RSI 14
             delta = close.diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
             rs = gain / loss
             rsi14 = 100 - (100 / (1 + rs))
             rsi_val = rsi14.iloc[-1]
-
             return {
                 "ma_5": round(float(ma5), 2),
                 "ma_60": round(float(ma60), 2),
@@ -86,11 +77,8 @@ class StockResearchEngine:
     def run_research(self):
         try:
             t = yf.Ticker(self.ticker)
-            
-            # 1. CORE DATA: History (Fast & Reliable)
             hist = t.history(period="1y")
             if hist.empty: hist = t.history(period="1mo")
-            
             if not hist.empty:
                 current_price = float(hist['Close'].iloc[-1])
                 prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current_price
@@ -101,11 +89,15 @@ class StockResearchEngine:
                 })
                 self.data["technicals"].update(self._calculate_indicators(hist))
 
-            # 2. OPTIONAL DATA: Info & Financials (Wrapped in try-except to prevent blocking)
             try:
-                # Use fast_info if available or standard info
                 info = t.info
                 if info:
+                    self.data["company_name"] = info.get('longName', self.ticker)
+                    desc = info.get('longBusinessSummary', "N/A")
+                    if desc != "N/A":
+                        # Truncate to a very short description
+                        self.data["description"] = desc[:150] + "..." if len(desc) > 150 else desc
+                    
                     self.data["price"]["pb_ratio"] = round(float(info.get('priceToBook', 0)), 2) if info.get('priceToBook') else "N/A"
                     target = info.get('targetMeanPrice')
                     self.data["consensus"].update({
@@ -116,26 +108,20 @@ class StockResearchEngine:
             except: pass
 
             try:
-                # Fetch quarterly data with a timeout-like approach (only if needed)
                 q_fin = t.quarterly_financials
                 if not q_fin.empty:
                     latest_q_date = q_fin.columns[0]
                     self.data["fundamentals"]["quarter"] = f"Q{(latest_q_date.month-1)//3 + 1}"
-                    
                     rev = q_fin.loc['Total Revenue'].iloc[0] if 'Total Revenue' in q_fin.index else "N/A"
                     self.data["fundamentals"]["revenue"] = rev
-                    
                     if len(q_fin.columns) > 4 and 'Total Revenue' in q_fin.index:
                         prev_rev = q_fin.loc['Total Revenue'].iloc[4]
                         if prev_rev and prev_rev != 0:
                             self.data["fundamentals"]["revenue_yoy"] = round(float(((rev - prev_rev) / prev_rev) * 100), 1)
-
                     if 'Gross Profit' in q_fin.index and rev != "N/A":
                         self.data["fundamentals"]["gross_margin"] = round(float((q_fin.loc['Gross Profit'].iloc[0] / rev) * 100), 1)
-                    
                     if 'Net Income' in q_fin.index and rev != "N/A":
                         self.data["fundamentals"]["net_margin"] = round(float((q_fin.loc['Net Income'].iloc[0] / rev) * 100), 1)
-
                 q_bs = t.quarterly_balance_sheet
                 if not q_bs.empty:
                     cash = q_bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in q_bs.index else \
@@ -143,7 +129,6 @@ class StockResearchEngine:
                     self.data["fundamentals"]["cash_reserves"] = cash
             except: pass
 
-            # 3. CHECKLISTS (Based on whatever data we got)
             rsi = self.data["technicals"]["rsi"]
             pb = self.data["price"]["pb_ratio"]
             self.data["checklists"] = {
