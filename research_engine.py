@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine - Enhanced with Company Info
-Fetches company full name and short description along with financial data.
+Stock Research Engine - Enhanced with News and Better Description
+Fetches company info, financial data, and significant news.
 """
 
 import json
@@ -40,6 +40,7 @@ class StockResearchEngine:
                 "bias_24": "N/A",
                 "cci_14": "N/A"
             },
+            "news": [],
             "checklists": {}
         }
 
@@ -93,10 +94,7 @@ class StockResearchEngine:
                 info = t.info
                 if info:
                     self.data["company_name"] = info.get('longName', self.ticker)
-                    desc = info.get('longBusinessSummary', "N/A")
-                    if desc != "N/A":
-                        # Truncate to a very short description
-                        self.data["description"] = desc[:150] + "..." if len(desc) > 150 else desc
+                    self.data["description"] = info.get('longBusinessSummary', "N/A")
                     
                     self.data["price"]["pb_ratio"] = round(float(info.get('priceToBook', 0)), 2) if info.get('priceToBook') else "N/A"
                     target = info.get('targetMeanPrice')
@@ -105,6 +103,20 @@ class StockResearchEngine:
                         "target_price": round(float(target), 2) if target else "N/A",
                         "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1) if target and current_price > 0 else "N/A"
                     })
+            except: pass
+
+            try:
+                # Fetch news
+                news_list = t.news
+                if news_list:
+                    # Take top 2 significant news
+                    for item in news_list[:2]:
+                        self.data["news"].append({
+                            "title": item.get("title", "N/A"),
+                            "publisher": item.get("publisher", "N/A"),
+                            "link": item.get("link", "#"),
+                            "provider_publish_time": datetime.fromtimestamp(item.get("providerPublishTime", 0), self.hkt).strftime("%Y-%m-%d %H:%M")
+                        })
             except: pass
 
             try:

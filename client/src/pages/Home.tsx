@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { 
   Loader2, Search, TrendingUp, ShieldAlert, BarChart3, 
   Activity, Clock, X, CheckCircle2, AlertCircle, 
-  ArrowLeftRight, Info
+  ArrowLeftRight, Info, Newspaper, ExternalLink, ChevronDown, ChevronUp
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -17,6 +17,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+
+interface NewsItem {
+  title: string;
+  publisher: string;
+  link: string;
+  provider_publish_time: string;
+}
 
 interface StockData {
   ticker: string;
@@ -51,6 +58,7 @@ interface StockData {
     bias_24: number | string;
     cci_14: number | string;
   };
+  news: NewsItem[];
   checklists: {
     [key: string]: {
       name: string;
@@ -69,7 +77,7 @@ interface HistoryItem {
   data: StockData;
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history_v4";
+const HISTORY_STORAGE_KEY = "stock_research_history_v5";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
@@ -78,6 +86,7 @@ export default function Home() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
   const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -105,6 +114,7 @@ export default function Home() {
   const handleSearch = async (searchTicker: string) => {
     if (!searchTicker) return;
     setLoading(true);
+    setIsDescExpanded(false);
     try {
       const response = await fetch("/api/stock-research", {
         method: "POST",
@@ -190,12 +200,22 @@ export default function Home() {
                         <h2 className="text-3xl font-bold">{data.ticker}</h2>
                         <span className="text-blue-100 text-lg opacity-90">| {data.company_name}</span>
                       </div>
-                      <p className="text-blue-100 text-sm opacity-80 mb-3 flex items-center gap-1">
-                        <Info className="h-3 w-3" /> {data.description}
-                      </p>
-                      <p className="text-blue-100 text-xs opacity-60">Last Updated: {data.updated_at} (HKT)</p>
+                      <div className="relative">
+                        <p className={`text-blue-100 text-sm opacity-80 mb-1 flex items-start gap-1 ${!isDescExpanded ? 'line-clamp-2' : ''}`}>
+                          <Info className="h-3 w-3 mt-1 flex-shrink-0" /> {data.description}
+                        </p>
+                        {data.description.length > 150 && (
+                          <button 
+                            onClick={() => setIsDescExpanded(!isDescExpanded)}
+                            className="text-blue-200 text-xs hover:text-white flex items-center gap-0.5 font-medium"
+                          >
+                            {isDescExpanded ? <><ChevronUp className="h-3 w-3" /> Show Less</> : <><ChevronDown className="h-3 w-3" /> Show More</>}
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-blue-100 text-xs opacity-60 mt-3">Last Updated: {data.updated_at} (HKT)</p>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right ml-4">
                       <div className="text-3xl font-bold">${data.price.current_price.toFixed(3)}</div>
                       <Badge variant="secondary" className={data.price.change >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>
                         {data.price.change >= 0 ? "+" : ""}{data.price.change_percent}%
@@ -284,6 +304,42 @@ export default function Home() {
                     </CardContent>
                   </Card>
                 </div>
+
+                {/* News Section */}
+                <Card>
+                  <CardHeader className="flex flex-row items-center gap-2">
+                    <Newspaper className="h-5 w-5 text-blue-600" />
+                    <CardTitle>Significant Stock News</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {data.news && data.news.length > 0 ? (
+                        data.news.map((item, idx) => (
+                          <a 
+                            key={idx} 
+                            href={item.link} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="p-4 rounded-xl border border-slate-200 bg-white hover:border-blue-400 hover:shadow-md transition-all group"
+                          >
+                            <div className="flex justify-between items-start mb-2">
+                              <Badge variant="outline" className="text-[10px] uppercase tracking-wider">{item.publisher}</Badge>
+                              <ExternalLink className="h-3 w-3 text-slate-300 group-hover:text-blue-500" />
+                            </div>
+                            <h4 className="font-bold text-slate-900 line-clamp-2 mb-2 group-hover:text-blue-600">{item.title}</h4>
+                            <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> {item.provider_publish_time}
+                            </p>
+                          </a>
+                        ))
+                      ) : (
+                        <div className="col-span-2 text-center py-8 text-slate-400 italic">
+                          No significant news found for this stock.
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
 
                 {/* Checklist */}
                 <Card>
