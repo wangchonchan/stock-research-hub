@@ -240,9 +240,22 @@ class StockResearchEngine:
 
     def save_to_json(self, filepath: str = None):
         if filepath is None: filepath = f"research_data_{self.ticker}.json"
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
-        return True
+        
+        # Ensure all data is JSON serializable (convert bool-like objects if necessary)
+        def serialize(obj):
+            if isinstance(obj, (datetime, timezone)):
+                return obj.isoformat()
+            if hasattr(obj, 'item'): # Handle numpy types
+                return obj.item()
+            return str(obj)
+
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2, default=serialize)
+            return True
+        except Exception as e:
+            print(f"❌ Error saving JSON: {e}")
+            return False
 
 if __name__ == "__main__":
     ticker = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
