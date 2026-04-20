@@ -8,11 +8,11 @@ WORKDIR /app
 # 复制所有文件
 COPY . .
 
-# 自动寻找 package.json 所在的目录并进入
-RUN DIR=$(find . -name "package.json" -not -path "*/node_modules/*" -exec dirname {} \;) && \
-    echo "Found package.json in $DIR" && \
-    cd $DIR && \
-    npm install -g pnpm && \
+# 如果代码在子文件夹里，把它移出来到根目录
+RUN if [ -d "stock-research-hub" ]; then mv stock-research-hub/* . && mv stock-research-hub/.* . || true; fi
+
+# 现在所有文件都在 /app 根目录了，直接开始安装和构建
+RUN npm install -g pnpm && \
     pnpm install && \
     pip3 install --no-cache-dir -r requirements.txt --break-system-packages && \
     pnpm build
@@ -20,5 +20,5 @@ RUN DIR=$(find . -name "package.json" -not -path "*/node_modules/*" -exec dirnam
 # 暴露端口
 EXPOSE 3000
 
-# 启动脚本：同样自动寻找并运行
-CMD ["sh", "-c", "DIR=$(find . -name \"dist\" -type d -not -path \"*/node_modules/*\" -exec dirname {} \\;) && cd $DIR && node dist/index.js"]
+# 启动服务器
+CMD ["node", "dist/index.js"]
