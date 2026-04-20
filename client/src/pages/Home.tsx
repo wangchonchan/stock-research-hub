@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Search, TrendingUp, ShieldAlert, BarChart3, Activity, Clock, X, CheckCircle2, AlertCircle } from "lucide-react";
+import { Loader2, Search, TrendingUp, ShieldAlert, BarChart3, Activity, Clock, X, CheckCircle2, AlertCircle, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 interface StockData {
@@ -14,7 +14,7 @@ interface StockData {
     current_price: number;
     change: number;
     change_percent: number;
-    pb_ratio: number;
+    pb_ratio: number | string;
   };
   consensus: {
     target_price: number | string;
@@ -23,23 +23,23 @@ interface StockData {
     recommendation: string;
   };
   fundamentals: {
-    revenue: number;
-    gross_margin: number;
-    net_margin: number;
-    book_value: number;
-    roe: number;
+    revenue: number | string;
+    gross_margin: number | string;
+    net_margin: number | string;
+    book_value: number | string;
+    roe: number | string;
   };
   technicals: {
-    rsi: number;
-    macd: number;
-    ma_5: number;
-    ma_20: number;
-    ma_60: number;
+    rsi: number | string;
+    macd: number | string;
+    ma_5: number | string;
+    ma_20: number | string;
+    ma_60: number | string;
   };
   checklists: {
     [key: string]: {
       name: string;
-      value: number;
+      value: number | string;
       triggered: boolean;
       status: string;
     };
@@ -47,12 +47,14 @@ interface StockData {
 }
 
 interface HistoryItem {
+  id: string; // Unique ID for each search to allow duplicates
   ticker: string;
   timestamp: string;
   price: number;
+  data: StockData; // Store full data for instant comparison
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history";
+const HISTORY_STORAGE_KEY = "stock_research_history_v2";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
@@ -90,20 +92,27 @@ export default function Home() {
     });
   };
 
-  const addToHistory = (tickerSymbol: string, price: number) => {
+  const addToHistory = (stockData: StockData) => {
     const newItem: HistoryItem = {
-      ticker: tickerSymbol,
+      id: Date.now().toString(),
+      ticker: stockData.ticker,
       timestamp: getHKTTime(),
-      price,
+      price: stockData.price.current_price,
+      data: stockData
     };
 
-    const filtered = history.filter((item) => item.ticker !== tickerSymbol);
-    setHistory([newItem, ...filtered].slice(0, 10));
+    // Keep duplicates for comparison, but limit total history
+    setHistory([newItem, ...history].slice(0, 20));
   };
 
   const clearHistory = () => {
     setHistory([]);
     toast.success("History cleared");
+  };
+
+  const deleteHistoryItem = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setHistory(history.filter(item => item.id !== id));
   };
 
   const handleSearch = async (searchTicker: string) => {
@@ -121,7 +130,7 @@ export default function Home() {
 
       const result = await response.json();
       setData(result);
-      addToHistory(result.ticker, result.price.current_price);
+      addToHistory(result);
       toast.success(`Successfully updated research for ${searchTicker.toUpperCase()}`);
     } catch (error) {
       console.error(error);
@@ -134,6 +143,11 @@ export default function Home() {
   const onFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     handleSearch(ticker);
+  };
+
+  // Calculate Risk Control Line (Stop Loss) - e.g., 10% below current price
+  const calculateStopLoss = (price: number) => {
+    return (price * 0.9).toFixed(2);
   };
 
   return (
@@ -192,17 +206,17 @@ export default function Home() {
                     <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
                       <p className="text-blue-200 text-sm mb-1">Analyst Consensus</p>
                       <p className="text-xl font-bold">{data.consensus.recommendation}</p>
-                      <p className="text-blue-200 text-xs">Analysts: {data.consensus.number_of_analysts}</p>
-                    </div>
-                    <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-                      <p className="text-blue-200 text-sm mb-1">Upside Potential</p>
-                      <p className="text-xl font-bold">{typeof data.consensus.upside_potential === 'number' ? `+${data.consensus.upside_potential}%` : data.consensus.upside_potential}</p>
                       <p className="text-blue-200 text-xs">Target: ${typeof data.consensus.target_price === 'number' ? data.consensus.target_price.toFixed(2) : data.consensus.target_price}</p>
                     </div>
                     <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-                      <p className="text-blue-200 text-sm mb-1">Valuation (PB)</p>
-                      <p className="text-xl font-bold">{data.price.pb_ratio || "N/A"}</p>
-                      <p className="text-blue-200 text-xs">Price to Book Ratio</p>
+                      <p className="text-blue-200 text-sm mb-1">Upside Potential</p>
+                      <p className="text-xl font-bold">{typeof data.consensus.upside_potential === 'number' ? `${data.consensus.upside_potential > 0 ? '+' : ''}${data.consensus.upside_potential}%` : data.consensus.upside_potential}</p>
+                      <p className="text-blue-200 text-xs">Relative to current</p>
+                    </div>
+                    <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
+                      <p className="text-blue-200 text-sm mb-1">Risk Control</p>
+                      <p className="text-xl font-bold">${calculateStopLoss(data.price.current_price)}</p>
+                      <p className="text-blue-200 text-xs">Final Defense Line</p>
                     </div>
                   </div>
                 </div>
@@ -217,19 +231,19 @@ export default function Home() {
                     <CardContent className="space-y-4">
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-slate-500">Gross Margin</span>
-                        <span className="font-semibold text-green-600">{data.fundamentals.gross_margin}%</span>
+                        <span className="font-semibold text-green-600">{data.fundamentals.gross_margin}{typeof data.fundamentals.gross_margin === 'number' ? '%' : ''}</span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-slate-500">Net Margin</span>
-                        <span className="font-semibold text-orange-600">{data.fundamentals.net_margin}%</span>
+                        <span className="font-semibold text-orange-600">{data.fundamentals.net_margin}{typeof data.fundamentals.net_margin === 'number' ? '%' : ''}</span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-slate-500">ROE</span>
-                        <span className="font-semibold">{data.fundamentals.roe}%</span>
+                        <span className="font-semibold">{data.fundamentals.roe}{typeof data.fundamentals.roe === 'number' ? '%' : ''}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-slate-500">Book Value</span>
-                        <span className="font-semibold">${data.fundamentals.book_value}</span>
+                        <span className="font-semibold">{typeof data.fundamentals.book_value === 'number' ? `$${data.fundamentals.book_value}` : data.fundamentals.book_value}</span>
                       </div>
                     </CardContent>
                   </Card>
@@ -242,21 +256,21 @@ export default function Home() {
                     <CardContent className="space-y-4">
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-slate-500">RSI (14)</span>
-                        <Badge className={data.technicals.rsi > 65 ? "bg-red-100 text-red-700" : data.technicals.rsi < 35 ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}>
-                          {data.technicals.rsi} {data.technicals.rsi > 65 ? "Overbought" : data.technicals.rsi < 35 ? "Oversold" : "Neutral"}
+                        <Badge className={typeof data.technicals.rsi === 'number' ? (data.technicals.rsi > 65 ? "bg-red-100 text-red-700" : data.technicals.rsi < 35 ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700") : "bg-slate-100 text-slate-700"}>
+                          {data.technicals.rsi} {typeof data.technicals.rsi === 'number' ? (data.technicals.rsi > 65 ? "Overbought" : data.technicals.rsi < 35 ? "Oversold" : "Neutral") : ""}
                         </Badge>
                       </div>
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-slate-500">MA (5)</span>
-                        <span className="font-semibold">${data.technicals.ma_5}</span>
+                        <span className="font-semibold">{typeof data.technicals.ma_5 === 'number' ? `$${data.technicals.ma_5}` : data.technicals.ma_5}</span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-slate-500">MA (20)</span>
-                        <span className="font-semibold">${data.technicals.ma_20}</span>
+                        <span className="font-semibold">{typeof data.technicals.ma_20 === 'number' ? `$${data.technicals.ma_20}` : data.technicals.ma_20}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-slate-500">MA (60)</span>
-                        <span className="font-semibold">${data.technicals.ma_60}</span>
+                        <span className="font-semibold">{typeof data.technicals.ma_60 === 'number' ? `$${data.technicals.ma_60}` : data.technicals.ma_60}</span>
                       </div>
                     </CardContent>
                   </Card>
@@ -295,11 +309,11 @@ export default function Home() {
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <div className="flex items-center gap-2">
                   <Clock className="h-5 w-5 text-slate-400" />
-                  <CardTitle className="text-lg">History</CardTitle>
+                  <CardTitle className="text-lg">History (Comparison)</CardTitle>
                 </div>
                 {history.length > 0 && (
-                  <Button variant="ghost" size="sm" onClick={clearHistory} className="h-8 w-8 p-0">
-                    <X className="h-4 w-4" />
+                  <Button variant="ghost" size="sm" onClick={clearHistory} className="text-xs text-slate-400 hover:text-red-500">
+                    Clear All
                   </Button>
                 )}
               </CardHeader>
@@ -307,22 +321,29 @@ export default function Home() {
                 {history.length === 0 ? (
                   <p className="text-sm text-slate-400 text-center py-4">No recent searches</p>
                 ) : (
-                  <div className="space-y-3">
-                    {history.map((item, i) => (
-                      <button
-                        key={i}
+                  <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+                    {history.map((item) => (
+                      <div
+                        key={item.id}
                         onClick={() => {
                           setTicker(item.ticker);
-                          handleSearch(item.ticker);
+                          setData(item.data); // Instant comparison
+                          toast.info(`Viewing historical data for ${item.ticker}`);
                         }}
-                        className="w-full text-left p-3 rounded-xl border bg-white hover:border-blue-400 hover:shadow-sm transition-all group"
+                        className={`w-full text-left p-3 rounded-xl border bg-white hover:border-blue-400 hover:shadow-sm transition-all group cursor-pointer relative ${data?.timestamp === item.data.timestamp ? 'border-blue-500 ring-1 ring-blue-500' : ''}`}
                       >
+                        <button 
+                          onClick={(e) => deleteHistoryItem(e, item.id)}
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-100 rounded-full transition-opacity"
+                        >
+                          <X className="h-3 w-3 text-slate-400" />
+                        </button>
                         <div className="flex justify-between items-center mb-1">
                           <span className="font-bold text-slate-900 group-hover:text-blue-600">{item.ticker}</span>
                           <span className="text-sm font-semibold">${item.price.toFixed(2)}</span>
                         </div>
                         <p className="text-[10px] text-slate-400">{item.timestamp}</p>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 )}
