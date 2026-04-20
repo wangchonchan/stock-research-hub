@@ -1,3 +1,11 @@
+---
+title: Stock Research Hub
+emoji: 📊
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 3000
+---
 # 📊 Stock Research Hub (React Web Edition)
 
 Stock Research Hub 现在是一个全功能的 React Web 应用程序。它将复杂的 Python 调研逻辑集成到了现代化的 Web 界面中，让您只需在浏览器中输入股票代码并点击按钮，即可完成深度调研。
