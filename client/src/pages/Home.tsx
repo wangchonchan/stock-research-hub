@@ -77,7 +77,7 @@ interface HistoryItem {
   data: StockData;
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history_v6";
+const HISTORY_STORAGE_KEY = "stock_research_history_v7";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
@@ -198,7 +198,7 @@ export default function Home() {
                         <h2 className="text-3xl font-bold">{data.ticker}</h2>
                         <span className="text-blue-100 text-lg opacity-90">| {data.company_name}</span>
                       </div>
-                      <p className="text-blue-100 text-sm opacity-80 mb-3 flex items-start gap-1">
+                      <p className="text-blue-100 text-sm opacity-80 mb-3 flex items-start gap-1 line-clamp-3">
                         <Info className="h-3 w-3 mt-1 flex-shrink-0" /> {data.description}
                       </p>
                       <p className="text-blue-100 text-xs opacity-60">Last Updated: {data.updated_at} (HKT)</p>

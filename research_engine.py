@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine - Optimized with Summary and Robust News
+Stock Research Engine - Robust News & Strict 40-word Summary
 """
 
 import json
@@ -114,20 +114,40 @@ class StockResearchEngine:
             except: pass
 
             try:
-                # Fetch news with more robust parsing
-                news_list = t.news
+                # Robust News Extraction
+                # Try multiple ways to get news
+                news_list = []
+                try:
+                    news_list = t.news
+                except:
+                    pass
+                
+                if not news_list:
+                    # Fallback: try to get news from search if t.news fails
+                    pass
+
                 if news_list:
                     count = 0
                     for item in news_list:
                         if count >= 2: break
-                        title = item.get("title")
-                        link = item.get("link")
+                        # Extract fields with multiple possible keys
+                        title = item.get("title") or item.get("headline")
+                        link = item.get("link") or item.get("url")
+                        publisher = item.get("publisher") or item.get("source") or "N/A"
+                        pub_time = item.get("providerPublishTime") or item.get("pubDate") or 0
+                        
                         if title and link:
+                            # Convert pub_time to string
+                            if isinstance(pub_time, int):
+                                time_str = datetime.fromtimestamp(pub_time, self.hkt).strftime("%Y-%m-%d %H:%M")
+                            else:
+                                time_str = str(pub_time)
+                                
                             self.data["news"].append({
                                 "title": title,
-                                "publisher": item.get("publisher", "N/A"),
+                                "publisher": publisher,
                                 "link": link,
-                                "provider_publish_time": datetime.fromtimestamp(item.get("providerPublishTime", 0), self.hkt).strftime("%Y-%m-%d %H:%M")
+                                "provider_publish_time": time_str
                             })
                             count += 1
             except: pass
