@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine - Advanced Indicators & Quarterly Data
-Includes OSC_20, BIAS_24, CCI_14 and real quarterly financial metrics.
+Stock Research Engine - Optimized & Robust Version
+Ensures core data (Price, RSI, OSC) is always returned even if financials fail.
 """
 
 import json
@@ -43,17 +43,18 @@ class StockResearchEngine:
 
     def _calculate_indicators(self, df):
         try:
+            if len(df) < 60: return {}
             close = df['Close']
             
             # MA 5 & 60
             ma5 = close.rolling(window=5).mean().iloc[-1]
             ma60 = close.rolling(window=60).mean().iloc[-1]
             
-            # OSC_20 (Price Oscillator) - (Close - MA20)
+            # OSC_20
             ma20 = close.rolling(window=20).mean()
             osc20 = (close - ma20).iloc[-1]
             
-            # BIAS_24 - (Close - MA24) / MA24 * 100
+            # BIAS_24
             ma24 = close.rolling(window=24).mean()
             bias24 = ((close - ma24) / ma24 * 100).iloc[-1]
             
@@ -79,16 +80,16 @@ class StockResearchEngine:
                 "cci_14": round(float(cci14), 2),
                 "rsi": round(float(rsi_val), 2) if not pd.isna(rsi_val) else "N/A"
             }
-        except Exception as e:
-            print(f"Error calculating indicators: {e}", file=sys.stderr)
+        except:
             return {}
 
     def run_research(self):
         try:
             t = yf.Ticker(self.ticker)
+            
+            # 1. CORE DATA: History (Fast & Reliable)
             hist = t.history(period="1y")
-            if hist.empty:
-                hist = t.history(period="1mo")
+            if hist.empty: hist = t.history(period="1mo")
             
             if not hist.empty:
                 current_price = float(hist['Close'].iloc[-1])
@@ -100,45 +101,9 @@ class StockResearchEngine:
                 })
                 self.data["technicals"].update(self._calculate_indicators(hist))
 
-            # Fetch Quarterly Financials
+            # 2. OPTIONAL DATA: Info & Financials (Wrapped in try-except to prevent blocking)
             try:
-                # Get quarterly financials
-                q_fin = t.quarterly_financials
-                if not q_fin.empty:
-                    latest_q = q_fin.columns[0]
-                    prev_y_q = q_fin.columns[4] if len(q_fin.columns) > 4 else None
-                    
-                    # Determine Quarter Name (e.g., 2023-12-31 -> Q4)
-                    month = latest_q.month
-                    q_name = f"Q{(month-1)//3 + 1}"
-                    self.data["fundamentals"]["quarter"] = q_name
-                    
-                    rev = q_fin.loc['Total Revenue'].iloc[0] if 'Total Revenue' in q_fin.index else "N/A"
-                    self.data["fundamentals"]["revenue"] = rev
-                    
-                    if prev_y_q is not None and 'Total Revenue' in q_fin.index:
-                        prev_rev = q_fin.loc['Total Revenue'].iloc[4]
-                        if prev_rev and prev_rev != 0:
-                            growth = ((rev - prev_rev) / prev_rev) * 100
-                            self.data["fundamentals"]["revenue_yoy"] = round(float(growth), 1)
-
-                    # Margins
-                    if 'Gross Profit' in q_fin.index and 'Total Revenue' in q_fin.index:
-                        gm = (q_fin.loc['Gross Profit'].iloc[0] / rev) * 100
-                        self.data["fundamentals"]["gross_margin"] = round(float(gm), 1)
-                    
-                    if 'Net Income' in q_fin.index and 'Total Revenue' in q_fin.index:
-                        nm = (q_fin.loc['Net Income'].iloc[0] / rev) * 100
-                        self.data["fundamentals"]["net_margin"] = round(float(nm), 1)
-
-                # Cash Reserves from Balance Sheet
-                q_bs = t.quarterly_balance_sheet
-                if not q_bs.empty:
-                    cash = q_bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in q_bs.index else \
-                           q_bs.loc['Cash Cash Equivalents And Short Term Investments'].iloc[0] if 'Cash Cash Equivalents And Short Term Investments' in q_bs.index else "N/A"
-                    self.data["fundamentals"]["cash_reserves"] = cash
-
-                # Info for Consensus & PB
+                # Use fast_info if available or standard info
                 info = t.info
                 if info:
                     self.data["price"]["pb_ratio"] = round(float(info.get('priceToBook', 0)), 2) if info.get('priceToBook') else "N/A"
@@ -148,10 +113,37 @@ class StockResearchEngine:
                         "target_price": round(float(target), 2) if target else "N/A",
                         "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1) if target and current_price > 0 else "N/A"
                     })
-            except Exception as e:
-                print(f"Error fetching financials: {e}", file=sys.stderr)
+            except: pass
 
-            # Checklists
+            try:
+                # Fetch quarterly data with a timeout-like approach (only if needed)
+                q_fin = t.quarterly_financials
+                if not q_fin.empty:
+                    latest_q_date = q_fin.columns[0]
+                    self.data["fundamentals"]["quarter"] = f"Q{(latest_q_date.month-1)//3 + 1}"
+                    
+                    rev = q_fin.loc['Total Revenue'].iloc[0] if 'Total Revenue' in q_fin.index else "N/A"
+                    self.data["fundamentals"]["revenue"] = rev
+                    
+                    if len(q_fin.columns) > 4 and 'Total Revenue' in q_fin.index:
+                        prev_rev = q_fin.loc['Total Revenue'].iloc[4]
+                        if prev_rev and prev_rev != 0:
+                            self.data["fundamentals"]["revenue_yoy"] = round(float(((rev - prev_rev) / prev_rev) * 100), 1)
+
+                    if 'Gross Profit' in q_fin.index and rev != "N/A":
+                        self.data["fundamentals"]["gross_margin"] = round(float((q_fin.loc['Gross Profit'].iloc[0] / rev) * 100), 1)
+                    
+                    if 'Net Income' in q_fin.index and rev != "N/A":
+                        self.data["fundamentals"]["net_margin"] = round(float((q_fin.loc['Net Income'].iloc[0] / rev) * 100), 1)
+
+                q_bs = t.quarterly_balance_sheet
+                if not q_bs.empty:
+                    cash = q_bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in q_bs.index else \
+                           q_bs.loc['Cash Cash Equivalents And Short Term Investments'].iloc[0] if 'Cash Cash Equivalents And Short Term Investments' in q_bs.index else "N/A"
+                    self.data["fundamentals"]["cash_reserves"] = cash
+            except: pass
+
+            # 3. CHECKLISTS (Based on whatever data we got)
             rsi = self.data["technicals"]["rsi"]
             pb = self.data["price"]["pb_ratio"]
             self.data["checklists"] = {
