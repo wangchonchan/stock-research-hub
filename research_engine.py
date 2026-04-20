@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine - Enhanced with News and Better Description
-Fetches company info, financial data, and significant news.
+Stock Research Engine - Optimized with Summary and Robust News
 """
 
 import json
@@ -43,6 +42,14 @@ class StockResearchEngine:
             "news": [],
             "checklists": {}
         }
+
+    def _summarize_description(self, text: str, max_words: int = 40) -> str:
+        if not text or text == "N/A":
+            return "N/A"
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        return " ".join(words[:max_words]) + "..."
 
     def _calculate_indicators(self, df):
         try:
@@ -94,7 +101,8 @@ class StockResearchEngine:
                 info = t.info
                 if info:
                     self.data["company_name"] = info.get('longName', self.ticker)
-                    self.data["description"] = info.get('longBusinessSummary', "N/A")
+                    raw_desc = info.get('longBusinessSummary', "N/A")
+                    self.data["description"] = self._summarize_description(raw_desc, 40)
                     
                     self.data["price"]["pb_ratio"] = round(float(info.get('priceToBook', 0)), 2) if info.get('priceToBook') else "N/A"
                     target = info.get('targetMeanPrice')
@@ -106,17 +114,22 @@ class StockResearchEngine:
             except: pass
 
             try:
-                # Fetch news
+                # Fetch news with more robust parsing
                 news_list = t.news
                 if news_list:
-                    # Take top 2 significant news
-                    for item in news_list[:2]:
-                        self.data["news"].append({
-                            "title": item.get("title", "N/A"),
-                            "publisher": item.get("publisher", "N/A"),
-                            "link": item.get("link", "#"),
-                            "provider_publish_time": datetime.fromtimestamp(item.get("providerPublishTime", 0), self.hkt).strftime("%Y-%m-%d %H:%M")
-                        })
+                    count = 0
+                    for item in news_list:
+                        if count >= 2: break
+                        title = item.get("title")
+                        link = item.get("link")
+                        if title and link:
+                            self.data["news"].append({
+                                "title": title,
+                                "publisher": item.get("publisher", "N/A"),
+                                "link": link,
+                                "provider_publish_time": datetime.fromtimestamp(item.get("providerPublishTime", 0), self.hkt).strftime("%Y-%m-%d %H:%M")
+                            })
+                            count += 1
             except: pass
 
             try:
