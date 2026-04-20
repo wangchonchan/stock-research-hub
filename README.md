@@ -1,49 +1,42 @@
-# 📊 Stock Research Hub
+# 📊 Stock Research Hub (React Web Edition)
 
-Stock Research Hub 是一个基于 AI 的自动化股票调研工具。它能够自动从 Yahoo Finance 获取实时数据，进行深度技术面和基本面分析，并生成精美的可视化研究报告。
+Stock Research Hub 现在是一个全功能的 React Web 应用程序。它将复杂的 Python 调研逻辑集成到了现代化的 Web 界面中，让您只需在浏览器中输入股票代码并点击按钮，即可完成深度调研。
 
 ## ✨ 核心功能
 
-- **自动化调研**：集成 Yahoo Finance API，一键获取股价、财务指标、技术指标及分析师共识。
-- **Web 交互界面**：无需记忆复杂的终端命令，通过浏览器即可输入股票代码并触发更新。
-- **可视化报告**：自动生成基于 Tailwind CSS 的响应式 HTML 报告，提供直观的投资决策支持。
-- **三阶段策略**：内置科学的仓位管理建议，帮助投资者执行卖出和风控计划。
+- **一键式 Web 交互**：在网页输入框输入股票代码（如 AAPL, TSLA），点击按钮即可触发实时调研。
+- **实时数据集成**：后端自动调用 Python 调研引擎，通过 Yahoo Finance API 获取最新数据。
+- **现代化 UI**：基于 React + Tailwind CSS + Shadcn UI 构建，提供流畅的响应式体验。
+- **深度分析展示**：自动展示关键财务指标、技术指标以及三阶段投资策略。
 
 ## 🚀 快速开始
 
 ### 1. 安装依赖
-确保您的系统中已安装 Python 3.11+，然后运行：
+确保您的系统中已安装 Node.js 和 Python 3.11+，然后运行：
 ```bash
+pnpm install
 pip install -r requirements.txt
 ```
 
-### 2. 启动 Web 控制面板
-运行以下命令启动交互式界面：
+### 2. 启动开发服务器
+运行以下命令同时启动前端和后端：
 ```bash
-python app.py
+pnpm dev
 ```
-启动后，在浏览器中访问 `http://localhost:5000` 即可使用。
-
-### 3. 命令行使用 (可选)
-如果您更喜欢使用终端，也可以直接运行更新脚本：
-```bash
-./update.sh [TICKER]
-```
-例如：`./update.sh AAPL`
+启动后，在浏览器中访问控制台输出的地址（通常是 `http://localhost:5173` 或 `http://localhost:3000`）。
 
 ## 📂 项目结构
 
-- `app.py`: Flask Web 应用程序，提供图形化操作界面。
+- `client/`: React 前端代码，包含所有 UI 组件和交互逻辑。
+- `server/`: Express 后端代码，负责处理 API 请求并调用 Python 引擎。
 - `research_engine.py`: 核心调研引擎，负责数据抓取与逻辑分析。
-- `generate_html.py`: 报告生成器，将 JSON 数据转换为可视化 HTML。
-- `update.sh`: 自动化流水线脚本。
-- `index.html`: 最新生成的调研报告页面。
+- `requirements.txt`: Python 依赖项。
 
 ## 🛠️ 技术栈
 
-- **后端**: Python, Flask
-- **数据源**: Yahoo Finance (yfinance)
-- **前端**: Tailwind CSS, HTML5
-- **分析**: NumPy, Pandas
+- **前端**: React, TypeScript, Vite, Tailwind CSS, Shadcn UI
+- **后端**: Node.js, Express
+- **调研引擎**: Python, yfinance
+- **数据流**: 前端 (React) -> 后端 (Express) -> 引擎 (Python) -> 返回数据 (JSON)
 
 ---
