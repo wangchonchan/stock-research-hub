@@ -40,7 +40,7 @@ async function startServer() {
       error += chunk.toString();
     });
 
-    pythonProcess.on("close", (code) => {
+    pythonProcess.on("close", async (code) => {
       if (code !== 0) {
         console.error(`Python process exited with code ${code}: ${error}`);
         return res.status(500).json({ error: "Failed to fetch stock data" });
