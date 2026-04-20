@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Search, TrendingUp, ShieldAlert, BarChart3, Activity } from "lucide-react";
+import { Loader2, Search, TrendingUp, ShieldAlert, BarChart3, Activity, Clock, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface StockData {
@@ -41,10 +41,58 @@ interface StockData {
   };
 }
 
+interface HistoryItem {
+  ticker: string;
+  timestamp: string;
+  price: number;
+}
+
+const HISTORY_STORAGE_KEY = "stock_research_history";
+
 export default function Home() {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<StockData | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (savedHistory) {
+      try {
+        setHistory(JSON.parse(savedHistory));
+      } catch (e) {
+        console.error("Failed to parse history:", e);
+      }
+    }
+  }, []);
+
+  // Save history to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+  }, [history]);
+
+  const addToHistory = (tickerSymbol: string, price: number) => {
+    const newItem: HistoryItem = {
+      ticker: tickerSymbol,
+      timestamp: new Date().toLocaleString(),
+      price,
+    };
+
+    // Remove duplicate if exists
+    const filtered = history.filter((item) => item.ticker !== tickerSymbol);
+    // Add new item to the beginning
+    setHistory([newItem, ...filtered].slice(0, 10)); // Keep only last 10
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    toast.success("History cleared");
+  };
+
+  const loadFromHistory = (historyTicker: string) => {
+    setTicker(historyTicker);
+  };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,6 +110,7 @@ export default function Home() {
 
       const result = await response.json();
       setData(result);
+      addToHistory(result.ticker, result.price.current_price);
       toast.success(`Successfully updated research for ${ticker.toUpperCase()}`);
     } catch (error) {
       console.error(error);
@@ -73,14 +122,14 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         {/* Header & Search */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
             <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub</h1>
           </div>
-          
+
           <form onSubmit={handleSearch} className="flex w-full md:w-auto gap-2">
             <Input
               placeholder="Enter Stock Code (e.g. AAPL)"
@@ -95,129 +144,174 @@ export default function Home() {
           </form>
         </div>
 
-        {!data && !loading && (
-          <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200">
-            <BarChart3 className="mx-auto h-12 w-12 text-slate-300 mb-4" />
-            <h2 className="text-xl font-medium text-slate-600">Enter a stock ticker to start research</h2>
-            <p className="text-slate-400">Real-time data from Yahoo Finance API</p>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Main Content */}
+          <div className="lg:col-span-3">
+            {!data && !loading && (
+              <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200">
+                <BarChart3 className="mx-auto h-12 w-12 text-slate-300 mb-4" />
+                <h2 className="text-xl font-medium text-slate-600">Enter a stock ticker to start research</h2>
+                <p className="text-slate-400">Real-time data from Yahoo Finance API</p>
+              </div>
+            )}
+
+            {data && (
+              <div className="space-y-6 animate-in fade-in duration-500">
+                {/* Summary Banner */}
+                <div className="bg-blue-600 text-white rounded-2xl p-6 md:p-8 shadow-lg">
+                  <div className="flex justify-between items-start mb-6">
+                    <div>
+                      <h2 className="text-3xl font-bold mb-1">{data.ticker} Insight</h2>
+                      <p className="text-blue-100 opacity-80">Last Updated: {new Date(data.timestamp).toLocaleString()}</p>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-3xl font-bold">${data.price.current_price.toFixed(3)}</div>
+                      <Badge variant="secondary" className={data.price.change >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>
+                        {data.price.change >= 0 ? "+" : ""}{data.price.change_percent}%
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
+                      <p className="text-blue-200 text-sm mb-1">Analyst Consensus</p>
+                      <p className="text-xl font-bold">{data.consensus.number_of_analysts} Analysts Buy</p>
+                      <p className="text-blue-200 text-xs">Target: ${data.consensus.target_price.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
+                      <p className="text-blue-200 text-sm mb-1">Upside Potential</p>
+                      <p className="text-xl font-bold">+{data.consensus.upside_potential}%</p>
+                      <p className="text-blue-200 text-xs">Relative to current</p>
+                    </div>
+                    <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
+                      <p className="text-blue-200 text-sm mb-1">Risk Control</p>
+                      <p className="text-xl font-bold">${data.strategy.risk_control.stop_loss.toFixed(2)}</p>
+                      <p className="text-blue-200 text-xs">Stop Loss Line</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Metrics Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader className="flex flex-row items-center gap-2">
+                      <TrendingUp className="h-5 w-5 text-blue-600" />
+                      <CardTitle>Key Fundamentals</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Gross Margin</span>
+                        <span className="font-semibold text-green-600">{data.fundamentals.gross_margin}%</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Net Margin</span>
+                        <span className="font-semibold text-orange-600">{data.fundamentals.net_margin}%</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">ROE</span>
+                        <span className="font-semibold">{data.fundamentals.roe}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Book Value</span>
+                        <span className="font-semibold">${data.fundamentals.book_value}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="flex flex-row items-center gap-2">
+                      <Activity className="h-5 w-5 text-blue-600" />
+                      <CardTitle>Technical Indicators</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">RSI (14)</span>
+                        <Badge className={data.technicals.rsi > 70 ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}>
+                          {data.technicals.rsi} {data.technicals.rsi > 70 ? "Overbought" : "Neutral"}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">MA (5)</span>
+                        <span className="font-semibold">${data.technicals.ma_5}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">MA (20)</span>
+                        <span className="font-semibold">${data.technicals.ma_20}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">MA (60)</span>
+                        <span className="font-semibold">${data.technicals.ma_60}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Strategy Section */}
+                <Card>
+                  <CardHeader className="flex flex-row items-center gap-2">
+                    <ShieldAlert className="h-5 w-5 text-blue-600" />
+                    <CardTitle>3-Stage Exit Strategy</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {[data.strategy.stage_1, data.strategy.stage_2, data.strategy.stage_3].map((stage, i) => (
+                        <div key={i} className="p-4 rounded-xl border bg-slate-50">
+                          <div className="flex justify-between items-center mb-2">
+                            <span className="font-bold text-slate-900">Stage {i + 1}</span>
+                            <Badge variant="outline">{stage.status}</Badge>
+                          </div>
+                          <p className="text-sm text-slate-600 mb-1">Range: {stage.price_range}</p>
+                          <p className="text-sm text-slate-600 mb-1">Qty: {stage.quantity}</p>
+                          <p className="text-sm font-semibold text-blue-700">Target: {stage.target}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
           </div>
-        )}
 
-        {data && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            {/* Summary Banner */}
-            <div className="bg-blue-600 text-white rounded-2xl p-6 md:p-8 shadow-lg">
-              <div className="flex justify-between items-start mb-6">
-                <div>
-                  <h2 className="text-3xl font-bold mb-1">{data.ticker} Insight</h2>
-                  <p className="text-blue-100 opacity-80">Last Updated: {new Date(data.timestamp).toLocaleString()}</p>
+          {/* Sidebar - History */}
+          <div className="lg:col-span-1">
+            <Card className="sticky top-4">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-blue-600" />
+                  <CardTitle>History</CardTitle>
                 </div>
-                <div className="text-right">
-                  <div className="text-3xl font-bold">${data.price.current_price.toFixed(3)}</div>
-                  <Badge variant="secondary" className={data.price.change >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>
-                    {data.price.change >= 0 ? "+" : ""}{data.price.change_percent}%
-                  </Badge>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-                  <p className="text-blue-200 text-sm mb-1">Analyst Consensus</p>
-                  <p className="text-xl font-bold">{data.consensus.number_of_analysts} Analysts Buy</p>
-                  <p className="text-blue-200 text-xs">Target: ${data.consensus.target_price.toFixed(2)}</p>
-                </div>
-                <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-                  <p className="text-blue-200 text-sm mb-1">Upside Potential</p>
-                  <p className="text-xl font-bold">+{data.consensus.upside_potential}%</p>
-                  <p className="text-blue-200 text-xs">Relative to current</p>
-                </div>
-                <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-                  <p className="text-blue-200 text-sm mb-1">Risk Control</p>
-                  <p className="text-xl font-bold">${data.strategy.risk_control.stop_loss.toFixed(2)}</p>
-                  <p className="text-blue-200 text-xs">Stop Loss Line</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Metrics Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center gap-2">
-                  <TrendingUp className="h-5 w-5 text-blue-600" />
-                  <CardTitle>Key Fundamentals</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-slate-500">Gross Margin</span>
-                    <span className="font-semibold text-green-600">{data.fundamentals.gross_margin}%</span>
-                  </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-slate-500">Net Margin</span>
-                    <span className="font-semibold text-orange-600">{data.fundamentals.net_margin}%</span>
-                  </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-slate-500">ROE</span>
-                    <span className="font-semibold">{data.fundamentals.roe}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Book Value</span>
-                    <span className="font-semibold">${data.fundamentals.book_value}</span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center gap-2">
-                  <Activity className="h-5 w-5 text-blue-600" />
-                  <CardTitle>Technical Indicators</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-slate-500">RSI (14)</span>
-                    <Badge className={data.technicals.rsi > 70 ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}>
-                      {data.technicals.rsi} {data.technicals.rsi > 70 ? "Overbought" : "Neutral"}
-                    </Badge>
-                  </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-slate-500">MA (5)</span>
-                    <span className="font-semibold">${data.technicals.ma_5}</span>
-                  </div>
-                  <div className="flex justify-between border-b pb-2">
-                    <span className="text-slate-500">MA (20)</span>
-                    <span className="font-semibold">${data.technicals.ma_20}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">MA (60)</span>
-                    <span className="font-semibold">${data.technicals.ma_60}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Strategy Section */}
-            <Card>
-              <CardHeader className="flex flex-row items-center gap-2">
-                <ShieldAlert className="h-5 w-5 text-blue-600" />
-                <CardTitle>3-Stage Exit Strategy</CardTitle>
+                {history.length > 0 && (
+                  <button
+                    onClick={clearHistory}
+                    className="text-xs text-slate-400 hover:text-slate-600 transition"
+                    title="Clear history"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {[data.strategy.stage_1, data.strategy.stage_2, data.strategy.stage_3].map((stage, i) => (
-                    <div key={i} className="p-4 rounded-xl border bg-slate-50">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="font-bold text-slate-900">Stage {i + 1}</span>
-                        <Badge variant="outline">{stage.status}</Badge>
-                      </div>
-                      <p className="text-sm text-slate-600 mb-1">Range: {stage.price_range}</p>
-                      <p className="text-sm text-slate-600 mb-1">Qty: {stage.quantity}</p>
-                      <p className="text-sm font-semibold text-blue-700">Target: {stage.target}</p>
-                    </div>
-                  ))}
-                </div>
+                {history.length === 0 ? (
+                  <p className="text-sm text-slate-400 text-center py-4">No search history yet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {history.map((item, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => loadFromHistory(item.ticker)}
+                        className="w-full text-left p-3 rounded-lg bg-slate-100 hover:bg-blue-100 transition text-sm"
+                      >
+                        <div className="font-semibold text-slate-900">{item.ticker}</div>
+                        <div className="text-xs text-slate-500">${item.price.toFixed(2)}</div>
+                        <div className="text-xs text-slate-400">{item.timestamp}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
