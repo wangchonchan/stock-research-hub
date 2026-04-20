@@ -17,14 +17,12 @@ COPY package.json pnpm-lock.yaml ./
 COPY patches ./patches
 
 # 安装 Node.js 依赖
-# 使用 --unsafe-perm 确保脚本可以运行，或者根据警告提示处理
 RUN pnpm install --frozen-lockfile
 
 # 复制所有源代码
 COPY . .
 
 # 构建前端和后端
-# 允许 esbuild 等脚本运行
 RUN pnpm build
 
 # 运行阶段
@@ -38,11 +36,18 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# 复制构建产物
+# 安装 pnpm 用于安装生产依赖
+RUN npm install -g pnpm
+
+# 复制构建产物和依赖描述文件
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json ./
+COPY --from=builder /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=builder /app/requirements.txt ./
 COPY --from=builder /app/research_engine.py ./
+COPY --from=builder /app/patches ./patches
+
+# 安装 Node.js 生产依赖
+RUN pnpm install --prod --frozen-lockfile
 
 # 安装 Python 依赖
 RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
