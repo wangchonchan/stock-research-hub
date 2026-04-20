@@ -14,5 +14,7 @@ jobs:
           lfs: true
       - name: Push to hub
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push --force https://Wangchon:$HF_TOKEN@huggingface.co/spaces/Wangchon/stock-research-hub main
+          HF_TOKEN: ${{ secrets.HF }}
+        run: |
+          git remote add space https://Wangchon:$HF_TOKEN@huggingface.co/spaces/Wangchon/stock-research-hub
+          git push --force space main
