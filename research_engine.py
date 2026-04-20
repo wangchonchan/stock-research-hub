@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine - Robust News & Strict 40-word Summary
+Stock Research Engine - Ultra Robust News (Google News RSS) & Strict 40-word Summary
 """
 
 import json
@@ -10,6 +10,9 @@ import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 import yfinance as yf
+import urllib.request
+import xml.etree.ElementTree as ET
+import re
 
 class StockResearchEngine:
     def __init__(self, ticker: str = "AAPL"):
@@ -50,6 +53,40 @@ class StockResearchEngine:
         if len(words) <= max_words:
             return text
         return " ".join(words[:max_words]) + "..."
+
+    def _fetch_google_news(self):
+        """Fetch news from Google News RSS as a robust fallback"""
+        try:
+            url = f"https://news.google.com/rss/search?q={self.ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as response:
+                xml_data = response.read()
+                root = ET.fromstring(xml_data)
+                
+                count = 0
+                for item in root.findall('.//item'):
+                    if count >= 2: break
+                    title = item.find('title').text if item.find('title') is not None else "N/A"
+                    link = item.find('link').text if item.find('link') is not None else "N/A"
+                    pub_date = item.find('pubDate').text if item.find('pubDate') is not None else "N/A"
+                    source = item.find('source').text if item.find('source') is not None else "N/A"
+                    
+                    # Clean title (Google News often appends source to title)
+                    if " - " in title:
+                        title = title.rsplit(" - ", 1)[0]
+                    
+                    if title != "N/A" and link != "N/A":
+                        self.data["news"].append({
+                            "title": title,
+                            "publisher": source,
+                            "link": link,
+                            "provider_publish_time": pub_date
+                        })
+                        count += 1
+        except Exception as e:
+            # If Google News fails, we still have the empty list
+            pass
 
     def _calculate_indicators(self, df):
         try:
@@ -113,44 +150,8 @@ class StockResearchEngine:
                     })
             except: pass
 
-            try:
-                # Robust News Extraction
-                # Try multiple ways to get news
-                news_list = []
-                try:
-                    news_list = t.news
-                except:
-                    pass
-                
-                if not news_list:
-                    # Fallback: try to get news from search if t.news fails
-                    pass
-
-                if news_list:
-                    count = 0
-                    for item in news_list:
-                        if count >= 2: break
-                        # Extract fields with multiple possible keys
-                        title = item.get("title") or item.get("headline")
-                        link = item.get("link") or item.get("url")
-                        publisher = item.get("publisher") or item.get("source") or "N/A"
-                        pub_time = item.get("providerPublishTime") or item.get("pubDate") or 0
-                        
-                        if title and link:
-                            # Convert pub_time to string
-                            if isinstance(pub_time, int):
-                                time_str = datetime.fromtimestamp(pub_time, self.hkt).strftime("%Y-%m-%d %H:%M")
-                            else:
-                                time_str = str(pub_time)
-                                
-                            self.data["news"].append({
-                                "title": title,
-                                "publisher": publisher,
-                                "link": link,
-                                "provider_publish_time": time_str
-                            })
-                            count += 1
-            except: pass
+            # Fetch news from Google News RSS (More reliable than yfinance in many environments)
+            self._fetch_google_news()
 
             try:
                 q_fin = t.quarterly_financials
