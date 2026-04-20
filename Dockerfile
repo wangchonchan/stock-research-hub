@@ -1,48 +1,26 @@
-# Multi-stage build for Stock Research Hub
-# Stage 1: Build Node.js frontend
-FROM node:22-alpine AS builder
+# 使用 Node.js 22 作为基础镜像
+FROM node:22-slim
+
+# 安装 Python 和 pip
+RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy package files
+# 首先安装前端依赖
 COPY package.json pnpm-lock.yaml ./
+RUN npm install -g pnpm && pnpm install
 
-# Install dependencies
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
-
-# Copy source code
+# 复制所有源代码
 COPY . .
 
-# Build the project
+# 安装 Python 依赖
+RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
+
+# 构建前端
 RUN pnpm build
 
-# Stage 2: Runtime environment with Python support
-FROM node:22-alpine
-
-# Install Python and required dependencies
-RUN apk add --no-cache python3 py3-pip
-
-WORKDIR /app
-
-# Copy built files from builder
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-
-# Copy Python scripts and requirements
-COPY research_engine.py generate_html.py ./
-COPY requirements.txt ./
-
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-# Copy package.json for reference
-COPY package.json ./
-
-# Expose port
+# 暴露端口
 EXPOSE 3000
 
-# Set environment to production
-ENV NODE_ENV=production
-
-# Start the server
+# 启动服务器
 CMD ["node", "dist/index.js"]
