@@ -226,6 +226,5 @@ chmod +x update.sh
 
 **版本：** 1.0.0  
 **最后更新：** 2026-04-16  
-**作者：** Manus AI
 
 **GitHub：** https://github.com/wangchonchan/stock-research-hub
