@@ -3,21 +3,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Search, TrendingUp, ShieldAlert, BarChart3, Activity, Clock, X } from "lucide-react";
+import { Loader2, Search, TrendingUp, ShieldAlert, BarChart3, Activity, Clock, X, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
 interface StockData {
   ticker: string;
   timestamp: string;
+  updated_at: string;
   price: {
     current_price: number;
     change: number;
     change_percent: number;
+    pb_ratio: number;
   };
   consensus: {
-    target_price: number;
-    upside_potential: number;
-    number_of_analysts: number;
+    target_price: number | string;
+    upside_potential: number | string;
+    number_of_analysts: number | string;
+    recommendation: string;
   };
   fundamentals: {
     revenue: number;
@@ -33,11 +36,13 @@ interface StockData {
     ma_20: number;
     ma_60: number;
   };
-  strategy: {
-    stage_1: { status: string; price_range: string; quantity: string; target: string };
-    stage_2: { status: string; price_range: string; quantity: string; target: string };
-    stage_3: { status: string; price_range: string; quantity: string; target: string };
-    risk_control: { stop_loss: number };
+  checklists: {
+    [key: string]: {
+      name: string;
+      value: number;
+      triggered: boolean;
+      status: string;
+    };
   };
 }
 
@@ -72,17 +77,28 @@ export default function Home() {
     localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
   }, [history]);
 
+  const getHKTTime = () => {
+    return new Date().toLocaleString("en-US", { 
+      timeZone: "Asia/Hong_Kong",
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: true
+    });
+  };
+
   const addToHistory = (tickerSymbol: string, price: number) => {
     const newItem: HistoryItem = {
       ticker: tickerSymbol,
-      timestamp: new Date().toLocaleString(),
+      timestamp: getHKTTime(),
       price,
     };
 
-    // Remove duplicate if exists
     const filtered = history.filter((item) => item.ticker !== tickerSymbol);
-    // Add new item to the beginning
-    setHistory([newItem, ...filtered].slice(0, 10)); // Keep only last 10
+    setHistory([newItem, ...filtered].slice(0, 10));
   };
 
   const clearHistory = () => {
@@ -90,20 +106,15 @@ export default function Home() {
     toast.success("History cleared");
   };
 
-  const loadFromHistory = (historyTicker: string) => {
-    setTicker(historyTicker);
-  };
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ticker) return;
+  const handleSearch = async (searchTicker: string) => {
+    if (!searchTicker) return;
 
     setLoading(true);
     try {
       const response = await fetch("/api/stock-research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker }),
+        body: JSON.stringify({ ticker: searchTicker }),
       });
 
       if (!response.ok) throw new Error("Failed to fetch data");
@@ -111,13 +122,18 @@ export default function Home() {
       const result = await response.json();
       setData(result);
       addToHistory(result.ticker, result.price.current_price);
-      toast.success(`Successfully updated research for ${ticker.toUpperCase()}`);
+      toast.success(`Successfully updated research for ${searchTicker.toUpperCase()}`);
     } catch (error) {
       console.error(error);
       toast.error("Error updating stock data. Please try again.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const onFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSearch(ticker);
   };
 
   return (
@@ -130,7 +146,7 @@ export default function Home() {
             <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub</h1>
           </div>
 
-          <form onSubmit={handleSearch} className="flex w-full md:w-auto gap-2">
+          <form onSubmit={onFormSubmit} className="flex w-full md:w-auto gap-2">
             <Input
               placeholder="Enter Stock Code (e.g. AAPL)"
               value={ticker}
@@ -151,7 +167,7 @@ export default function Home() {
               <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200">
                 <BarChart3 className="mx-auto h-12 w-12 text-slate-300 mb-4" />
                 <h2 className="text-xl font-medium text-slate-600">Enter a stock ticker to start research</h2>
-                <p className="text-slate-400">Real-time data from Yahoo Finance API</p>
+                <p className="text-slate-400">Real-time data from Yahoo Finance API (HKT Time)</p>
               </div>
             )}
 
@@ -162,7 +178,7 @@ export default function Home() {
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <h2 className="text-3xl font-bold mb-1">{data.ticker} Insight</h2>
-                      <p className="text-blue-100 opacity-80">Last Updated: {new Date(data.timestamp).toLocaleString()}</p>
+                      <p className="text-blue-100 opacity-80">Last Updated: {data.updated_at} (HKT)</p>
                     </div>
                     <div className="text-right">
                       <div className="text-3xl font-bold">${data.price.current_price.toFixed(3)}</div>
@@ -175,18 +191,18 @@ export default function Home() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
                       <p className="text-blue-200 text-sm mb-1">Analyst Consensus</p>
-                      <p className="text-xl font-bold">{data.consensus.number_of_analysts} Analysts Buy</p>
-                      <p className="text-blue-200 text-xs">Target: ${data.consensus.target_price.toFixed(2)}</p>
+                      <p className="text-xl font-bold">{data.consensus.recommendation}</p>
+                      <p className="text-blue-200 text-xs">Analysts: {data.consensus.number_of_analysts}</p>
                     </div>
                     <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
                       <p className="text-blue-200 text-sm mb-1">Upside Potential</p>
-                      <p className="text-xl font-bold">+{data.consensus.upside_potential}%</p>
-                      <p className="text-blue-200 text-xs">Relative to current</p>
+                      <p className="text-xl font-bold">{typeof data.consensus.upside_potential === 'number' ? `+${data.consensus.upside_potential}%` : data.consensus.upside_potential}</p>
+                      <p className="text-blue-200 text-xs">Target: ${typeof data.consensus.target_price === 'number' ? data.consensus.target_price.toFixed(2) : data.consensus.target_price}</p>
                     </div>
                     <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-                      <p className="text-blue-200 text-sm mb-1">Risk Control</p>
-                      <p className="text-xl font-bold">${data.strategy.risk_control.stop_loss.toFixed(2)}</p>
-                      <p className="text-blue-200 text-xs">Stop Loss Line</p>
+                      <p className="text-blue-200 text-sm mb-1">Valuation (PB)</p>
+                      <p className="text-xl font-bold">{data.price.pb_ratio || "N/A"}</p>
+                      <p className="text-blue-200 text-xs">Price to Book Ratio</p>
                     </div>
                   </div>
                 </div>
@@ -226,8 +242,8 @@ export default function Home() {
                     <CardContent className="space-y-4">
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-slate-500">RSI (14)</span>
-                        <Badge className={data.technicals.rsi > 70 ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}>
-                          {data.technicals.rsi} {data.technicals.rsi > 70 ? "Overbought" : "Neutral"}
+                        <Badge className={data.technicals.rsi > 65 ? "bg-red-100 text-red-700" : data.technicals.rsi < 35 ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}>
+                          {data.technicals.rsi} {data.technicals.rsi > 65 ? "Overbought" : data.technicals.rsi < 35 ? "Oversold" : "Neutral"}
                         </Badge>
                       </div>
                       <div className="flex justify-between border-b pb-2">
@@ -246,23 +262,24 @@ export default function Home() {
                   </Card>
                 </div>
 
-                {/* Strategy Section */}
+                {/* Checklist Section */}
                 <Card>
                   <CardHeader className="flex flex-row items-center gap-2">
                     <ShieldAlert className="h-5 w-5 text-blue-600" />
-                    <CardTitle>3-Stage Exit Strategy</CardTitle>
+                    <CardTitle>Research Checklist Monitoring</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {[data.strategy.stage_1, data.strategy.stage_2, data.strategy.stage_3].map((stage, i) => (
-                        <div key={i} className="p-4 rounded-xl border bg-slate-50">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {Object.entries(data.checklists).map(([key, list]) => (
+                        <div key={key} className={`p-4 rounded-xl border ${list.triggered ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
                           <div className="flex justify-between items-center mb-2">
-                            <span className="font-bold text-slate-900">Stage {i + 1}</span>
-                            <Badge variant="outline">{stage.status}</Badge>
+                            <span className="font-bold text-slate-900">{list.name}</span>
+                            {list.triggered ? <AlertCircle className="h-5 w-5 text-amber-600" /> : <CheckCircle2 className="h-5 w-5 text-green-600" />}
                           </div>
-                          <p className="text-sm text-slate-600 mb-1">Range: {stage.price_range}</p>
-                          <p className="text-sm text-slate-600 mb-1">Qty: {stage.quantity}</p>
-                          <p className="text-sm font-semibold text-blue-700">Target: {stage.target}</p>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-2xl font-bold">{list.value}</span>
+                            <Badge variant={list.triggered ? "destructive" : "outline"}>{list.status}</Badge>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -272,38 +289,39 @@ export default function Home() {
             )}
           </div>
 
-          {/* Sidebar - History */}
+          {/* Sidebar / History */}
           <div className="lg:col-span-1">
-            <Card className="sticky top-4">
-              <CardHeader className="flex flex-row items-center justify-between">
+            <Card className="sticky top-8">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <div className="flex items-center gap-2">
-                  <Clock className="h-5 w-5 text-blue-600" />
-                  <CardTitle>History</CardTitle>
+                  <Clock className="h-5 w-5 text-slate-400" />
+                  <CardTitle className="text-lg">History</CardTitle>
                 </div>
                 {history.length > 0 && (
-                  <button
-                    onClick={clearHistory}
-                    className="text-xs text-slate-400 hover:text-slate-600 transition"
-                    title="Clear history"
-                  >
+                  <Button variant="ghost" size="sm" onClick={clearHistory} className="h-8 w-8 p-0">
                     <X className="h-4 w-4" />
-                  </button>
+                  </Button>
                 )}
               </CardHeader>
               <CardContent>
                 {history.length === 0 ? (
-                  <p className="text-sm text-slate-400 text-center py-4">No search history yet</p>
+                  <p className="text-sm text-slate-400 text-center py-4">No recent searches</p>
                 ) : (
-                  <div className="space-y-2">
-                    {history.map((item, idx) => (
+                  <div className="space-y-3">
+                    {history.map((item, i) => (
                       <button
-                        key={idx}
-                        onClick={() => loadFromHistory(item.ticker)}
-                        className="w-full text-left p-3 rounded-lg bg-slate-100 hover:bg-blue-100 transition text-sm"
+                        key={i}
+                        onClick={() => {
+                          setTicker(item.ticker);
+                          handleSearch(item.ticker);
+                        }}
+                        className="w-full text-left p-3 rounded-xl border bg-white hover:border-blue-400 hover:shadow-sm transition-all group"
                       >
-                        <div className="font-semibold text-slate-900">{item.ticker}</div>
-                        <div className="text-xs text-slate-500">${item.price.toFixed(2)}</div>
-                        <div className="text-xs text-slate-400">{item.timestamp}</div>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-bold text-slate-900 group-hover:text-blue-600">{item.ticker}</span>
+                          <span className="text-sm font-semibold">${item.price.toFixed(2)}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400">{item.timestamp}</p>
                       </button>
                     ))}
                   </div>
