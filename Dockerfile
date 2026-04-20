@@ -1,23 +1,55 @@
-FROM node:22-slim
+# 使用 Node.js 22 作为基础镜像
+FROM node:22-slim AS builder
 
-# 1. 安装 Python
-RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
+# 安装 Python 和构建工具
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
- 
-# 2. 复制所有文件
+
+# 安装 pnpm
+RUN npm install -g pnpm
+
+# 复制依赖文件
+COPY package.json pnpm-lock.yaml ./
+COPY patches ./patches
+
+# 安装 Node.js 依赖
+RUN pnpm install --frozen-lockfile
+
+# 复制所有源代码
 COPY . .
 
-# 3. 自动进入代码目录并构建
-# 我们直接用通配符找到包含 package.json 的目录
-RUN cd $(find . -name "package.json" -not -path "*/node_modules/*" -exec dirname {} \;) && \
-    npm install -g pnpm && \
-    pnpm install && \
-    pip3 install --no-cache-dir -r requirements.txt --break-system-packages && \
-    pnpm build
+# 构建前端和后端
+RUN pnpm build
 
-# 4. 启动脚本：确保后端能找到前端文件
-# 我们在启动时动态进入目录并运行
+# 运行阶段
+FROM node:22-slim
+
+# 安装 Python 运行时环境
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 复制构建产物
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/requirements.txt ./
+COPY --from=builder /app/research_engine.py ./
+
+# 安装 Python 依赖
+RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
+
+# 暴露端口
 EXPOSE 3000
+
+# 设置环境变量
 ENV NODE_ENV=production
-CMD ["sh", "-c", "APP_DIR=$(find . -name \"package.json\" -not -path \"*/node_modules/*\" -exec dirname {} \\;) && cd $APP_DIR && node dist/index.js"]
+
+# 启动应用
+CMD ["node", "dist/index.js"]
