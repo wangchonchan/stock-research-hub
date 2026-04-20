@@ -154,7 +154,14 @@ class StockResearchEngine:
             
             target_price = info.get('targetMeanPrice', 0)
             current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-            upside = ((target_price - current_price) / current_price * 100) if current_price > 0 and target_price else 0
+            
+            # Fallback for current price if not in info
+            if not current_price:
+                hist = ticker.history(period="1d")
+                if not hist.empty:
+                    current_price = hist['Close'].iloc[-1]
+
+            upside = ((target_price - current_price) / current_price * 100) if current_price and current_price > 0 and target_price else 0
             
             consensus = {
                 "target_price": round(target_price, 2) if target_price else "N/A",
@@ -165,16 +172,36 @@ class StockResearchEngine:
             }
             return consensus
         except Exception as e:
-            print(f"❌ Error fetching consensus for {self.ticker}: {e}")
-            return {}
+            print(f"⚠️ Warning: Error fetching consensus for {self.ticker}: {e}")
+            return {
+                "target_price": "N/A",
+                "upside_potential": "N/A",
+                "number_of_analysts": 0,
+                "recommendation": "N/A",
+                "recommendation_mean": "N/A"
+            }
     
     def run_research(self) -> Dict[str, Any]:
         print(f"🔍 Fetching REAL data for {self.ticker} from Yahoo Finance...")
         
+        # Critical data
         price_data = self.fetch_stock_price()
-        fundamentals = self.fetch_fundamentals()
-        technicals = self.fetch_technical_indicators()
-        consensus = self.fetch_analyst_consensus()
+        
+        # Non-critical data (allow failure)
+        try:
+            fundamentals = self.fetch_fundamentals()
+        except:
+            fundamentals = {}
+            
+        try:
+            technicals = self.fetch_technical_indicators()
+        except:
+            technicals = {"rsi": 50, "ma_5": 0, "ma_20": 0, "ma_60": 0}
+            
+        try:
+            consensus = self.fetch_analyst_consensus()
+        except:
+            consensus = {"recommendation": "N/A", "number_of_analysts": 0, "target_price": "N/A", "upside_potential": "N/A"}
         
         # Calculate Simplified Checklists
         rsi = technicals.get("rsi", 50)
