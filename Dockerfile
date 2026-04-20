@@ -1,17 +1,19 @@
-# 使用 Node.js 22 作为基础镜像
+# 使用 Node.js 22
 FROM node:22-slim
 
-# 安装 Python 和 pip
+# 安装 Python
 RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# 首先安装前端依赖
-COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install
-
-# 复制所有源代码
+# 复制所有内容
 COPY . .
+
+# 进入代码所在的子文件夹
+WORKDIR /app/stock-research-hub
+
+# 安装前端依赖
+RUN npm install -g pnpm && pnpm install
 
 # 安装 Python 依赖
 RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
