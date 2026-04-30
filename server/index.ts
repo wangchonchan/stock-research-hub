@@ -30,8 +30,9 @@ async function startServer() {
     }
 
     // Execute Python script and capture stdout
-        // In Docker/Hugging Face environment, we use python3
-    const pythonProcess = spawn("python3", ["research_engine.py", ticker]);
+    const scriptPath = path.resolve(process.cwd(), "research_engine.py");
+    console.log(`Running python script at: ${scriptPath} for ticker: ${ticker}`);
+    const pythonProcess = spawn("python3", [scriptPath, ticker]);
 
     let stdoutData = "";
     let stderrData = "";
@@ -47,7 +48,11 @@ async function startServer() {
     pythonProcess.on("close", (code) => {
       if (code !== 0) {
         console.error(`Python process exited with code ${code}: ${stderrData}`);
-        return res.status(500).json({ error: "Failed to fetch stock data" });
+        return res.status(500).json({ 
+          error: "Failed to fetch stock data", 
+          details: stderrData,
+          code: code 
+        });
       }
 
       try {
