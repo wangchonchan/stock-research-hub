@@ -26,6 +26,7 @@ async function startServer() {
     }
 
     // Execute Python script and capture stdout
+        // In Docker/Hugging Face environment, we use python3
     const pythonProcess = spawn("python3", ["research_engine.py", ticker]);
 
     let stdoutData = "";

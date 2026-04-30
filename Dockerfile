@@ -53,10 +53,12 @@ RUN pnpm install --prod --frozen-lockfile
 RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
 
 # 暴露端口
-EXPOSE 3000
+# Hugging Face Spaces uses port 7860 by default
+EXPOSE 7860
 
 # 设置环境变量
 ENV NODE_ENV=production
+ENV PORT=7860
 
 # 启动应用
 CMD ["node", "dist/index.js"]
