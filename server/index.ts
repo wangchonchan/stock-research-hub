@@ -11,10 +11,9 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
-  const staticPath =
-    process.env.NODE_ENV === "production"
-      ? path.resolve(__dirname, "public")
-      : path.resolve(__dirname, "..", "dist", "public");
+  // In Docker, the structure is /app/dist/public
+  const staticPath = path.resolve(process.cwd(), "dist", "public");
+  console.log(`Serving static files from: ${staticPath}`);
 
   app.use(express.static(staticPath));
   app.use(express.json());
