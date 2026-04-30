@@ -4,7 +4,7 @@ emoji: 📊
 colorFrom: blue
 colorTo: indigo
 sdk: docker
-app_port: 3000
+app_port: 7860
 ---
 # 📊 Stock Research Hub (React Web Edition)
 

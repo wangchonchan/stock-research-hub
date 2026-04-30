@@ -1,5 +1,5 @@
 # 使用 Node.js 22 作为基础镜像
-FROM node:22-slim AS builder
+FROM node:22 AS builder
 
 # 安装 Python 和构建工具
 RUN apt-get update && apt-get install -y \
@@ -26,14 +26,14 @@ COPY . .
 RUN pnpm build
 
 # 运行阶段
-FROM node:22-slim
+FROM node:22
 
-# 安装 Python 运行时环境和必要的库
+# Install Python and dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
-    build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
