@@ -15,7 +15,10 @@ export const handler: Handler = async (event) => {
 
     // In Netlify Functions, the base directory might be different.
     // We need to find where research_engine.py is.
-    const scriptPath = path.resolve(__dirname, "../../research_engine.py");
+        // In Netlify, the function is bundled. We need to find the script relative to the base.
+    // Try multiple possible locations for the script
+    const scriptPath = path.resolve(process.cwd(), "research_engine.py");
+    console.log(`Attempting to run python script at: ${scriptPath}`);
 
     return new Promise((resolve) => {
       const pythonProcess = spawn("python3", [scriptPath, ticker]);

@@ -6,9 +6,12 @@
   NODE_VERSION = "22"
   PNPM_VERSION = "10"
 
+[functions]
+  included_files = ["research_engine.py"]
+
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
+  from = "/api/stock-research"
+  to = "/.netlify/functions/stock-research-api"
   status = 200
 
 [[redirects]]
