@@ -5,6 +5,7 @@
 [build.environment]
   NODE_VERSION = "22"
   PNPM_VERSION = "10"
+  PYTHON_VERSION = "3.10"
 
 [functions]
   included_files = ["research_engine.py"]

@@ -21,8 +21,11 @@ export const handler: Handler = async (event) => {
     console.log(`Attempting to run python script at: ${scriptPath}`);
 
     return new Promise((resolve) => {
-            // In Netlify Functions environment, 'python' is often the command instead of 'python3'
-      const pythonProcess = spawn("python", [scriptPath, ticker]);
+      // Try to find where python is
+      const pythonCommand = "python3"; // Let's try python3 again but with more logging
+      console.log(`Using command: ${pythonCommand} with script: ${scriptPath}`);
+      
+      const pythonProcess = spawn(pythonCommand, [scriptPath, ticker]);
 
       let stdoutData = "";
       let stderrData = "";
