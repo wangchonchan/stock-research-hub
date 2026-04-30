@@ -167,7 +167,7 @@ export default function Home() {
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
-            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v2.0</h1>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex w-full md:w-auto gap-2">
             <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
