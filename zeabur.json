@@ -1,0 +1,12 @@
+{
+  "build": {
+    "builder": "dockerfile"
+  },
+  "serverless": false,
+  "ports": [
+    {
+      "port": 3000,
+      "protocol": "http"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+yfinance>=0.2.32
+requests>=2.31.0
+flask
+pandas
+beautifulsoup4
+lxml
