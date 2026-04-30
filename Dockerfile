@@ -28,10 +28,12 @@ RUN pnpm build
 # 运行阶段
 FROM node:22-slim
 
-# 安装 Python 运行时环境
+# 安装 Python 运行时环境和必要的库
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
+    python3-venv \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -61,4 +63,5 @@ ENV NODE_ENV=production
 ENV PORT=7860
 
 # 启动应用
-CMD ["node", "dist/index.js"]
+# Use a shell to ensure environment variables are correctly expanded
+CMD ["sh", "-c", "node dist/index.js"]
