@@ -62,6 +62,10 @@ EXPOSE 7860
 ENV NODE_ENV=production
 ENV PORT=7860
 
+# Add a healthcheck to let Hugging Face know the service is ready
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:7860/health || exit 1
+
 # 启动应用
 # Use a shell to ensure environment variables are correctly expanded
 CMD ["sh", "-c", "node dist/index.js"]

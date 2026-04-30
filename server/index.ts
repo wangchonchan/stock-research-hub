@@ -18,6 +18,11 @@ async function startServer() {
   app.use(express.static(staticPath));
   app.use(express.json());
 
+  // Health check endpoint for Hugging Face
+  app.get("/health", (_req, res) => {
+    res.status(200).send("OK");
+  });
+
   app.post("/api/stock-research", (req, res) => {
     const { ticker } = req.body;
     if (!ticker) {
