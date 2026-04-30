@@ -1,15 +1,23 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { 
   Loader2, Search, TrendingUp, BarChart3, 
-  Activity, Clock, CheckCircle2, AlertCircle, 
-  Info, Newspaper, ExternalLink, Download,
-  TrendingDown, Minus
+  Activity, Clock, X, CheckCircle2, AlertCircle, 
+  Info, Newspaper, ExternalLink, TrendingDown, Minus,
+  ArrowLeftRight
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   ResponsiveContainer,
   BarChart,
@@ -18,7 +26,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   LineChart,
   Line
 } from "recharts";
@@ -92,14 +99,15 @@ interface HistoryItem {
   data: StockData;
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history_v8";
+const HISTORY_STORAGE_KEY = "stock_research_history_v9";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<StockData | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const reportRef = useRef<HTMLDivElement>(null);
+  const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
+  const [isCompareOpen, setIsCompareOpen] = useState(false);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -153,34 +161,43 @@ export default function Home() {
     }
   };
 
-  const exportReport = () => {
-    window.print();
+  const deleteHistoryItem = (id: string) => {
+    setHistory(history.filter(item => item.id !== id));
+    setSelectedForCompare(selectedForCompare.filter(sid => sid !== id));
+  };
+
+  const toggleSelectForCompare = (id: string) => {
+    if (selectedForCompare.includes(id)) {
+      setSelectedForCompare(selectedForCompare.filter(sid => sid !== id));
+    } else {
+      if (selectedForCompare.length >= 2) {
+        toast.warning("You can only compare 2 items at a time.");
+        return;
+      }
+      setSelectedForCompare([...selectedForCompare, id]);
+    }
+  };
+
+  const getCompareItems = () => {
+    return history.filter(item => selectedForCompare.includes(item.id));
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 print:p-0 print:bg-white">
-      <div className="max-w-6xl mx-auto" ref={reportRef}>
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 print:hidden">
+        <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
-            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.0</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.1</h1>
           </div>
-          <div className="flex gap-2 w-full md:w-auto">
-            <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex flex-1 gap-2">
-              <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
-              <Button type="submit" disabled={loading}>
-                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-                Update
-              </Button>
-            </form>
-            {data && (
-              <Button variant="outline" onClick={exportReport}>
-                <Download className="mr-2 h-4 w-4" />
-                Export
-              </Button>
-            )}
-          </div>
+          <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex w-full md:w-auto gap-2">
+            <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
+            <Button type="submit" disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+              Update
+            </Button>
+          </form>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -212,6 +229,7 @@ export default function Home() {
                         <p className="text-slate-400 text-sm max-w-2xl leading-relaxed">
                           {data.description}
                         </p>
+                        <p className="text-slate-500 text-xs mt-2">Last Updated: {data.updated_at} (HKT)</p>
                       </div>
                       <div className="text-right">
                         <div className="text-4xl font-bold">${data.price.current_price.toFixed(2)}</div>
@@ -300,6 +318,71 @@ export default function Home() {
                   </Card>
                 </div>
 
+                {/* Technical Indicators Grid (RESTORED) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader className="flex flex-row items-center gap-2">
+                      <TrendingUp className="h-5 w-5 text-blue-600" />
+                      <CardTitle>Key Fundamentals ({data.fundamentals.quarter})</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Revenue</span>
+                        <span className="font-semibold">{formatLargeNumber(data.fundamentals.revenue)}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">YoY Growth</span>
+                        <span className={`font-semibold ${typeof data.fundamentals.revenue_yoy === 'number' && data.fundamentals.revenue_yoy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {typeof data.fundamentals.revenue_yoy === 'number' ? `${data.fundamentals.revenue_yoy > 0 ? '+' : ''}${data.fundamentals.revenue_yoy}%` : data.fundamentals.revenue_yoy}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Gross Margin</span>
+                        <span className="font-semibold">{data.fundamentals.gross_margin}{typeof data.fundamentals.gross_margin === 'number' ? '%' : ''}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Net Margin</span>
+                        <span className="font-semibold">{data.fundamentals.net_margin}{typeof data.fundamentals.net_margin === 'number' ? '%' : ''}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Cash Reserves</span>
+                        <span className="font-semibold">{formatLargeNumber(data.fundamentals.cash_reserves)}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="flex flex-row items-center gap-2">
+                      <Activity className="h-5 w-5 text-blue-600" />
+                      <CardTitle>Technical Indicators</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">RSI (14)</span>
+                        <span className={`font-semibold ${typeof data.technicals.rsi === 'number' && (data.technicals.rsi > 70 || data.technicals.rsi < 30) ? 'text-orange-600' : 'text-slate-900'}`}>
+                          {data.technicals.rsi}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">MA (5)</span>
+                        <span className="font-semibold">${data.technicals.ma_5}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">MA (60)</span>
+                        <span className="font-semibold">${data.technicals.ma_60}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">OSC (20)</span>
+                        <span className="font-semibold">{data.technicals.osc_20}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">CCI (14)</span>
+                        <span className="font-semibold">{data.technicals.cci_14}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
                 {/* Smart Checklist */}
                 <Card className="shadow-sm border-slate-200">
                   <CardHeader>
@@ -374,14 +457,60 @@ export default function Home() {
             )}
           </div>
 
-          {/* Sidebar - History */}
-          <div className="print:hidden">
-            <Card className="sticky top-8 shadow-sm border-slate-200">
-              <CardHeader className="pb-3">
+          {/* Sidebar - History & Compare (RESTORED) */}
+          <div className="space-y-6">
+            <Card className="shadow-sm border-slate-200">
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
                 <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                   <Clock size={16} />
-                  Recent Research
+                  History
                 </CardTitle>
+                {selectedForCompare.length === 2 && (
+                  <Dialog open={isCompareOpen} onOpenChange={setIsCompareOpen}>
+                    <DialogTrigger asChild>
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1">
+                        <ArrowLeftRight size={12} /> Compare
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                      <DialogHeader>
+                        <DialogTitle>Stock Comparison</DialogTitle>
+                      </DialogHeader>
+                      <div className="grid grid-cols-2 gap-4 mt-4">
+                        {getCompareItems().map((item) => (
+                          <div key={item.id} className="space-y-4">
+                            <div className="p-4 bg-slate-900 text-white rounded-xl">
+                              <h3 className="text-2xl font-bold">{item.ticker}</h3>
+                              <p className="text-slate-400 text-sm">${item.price.toFixed(2)}</p>
+                            </div>
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">Recommendation</span>
+                                <span className="font-bold">{item.data.consensus.recommendation}</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">Target Price</span>
+                                <span className="font-bold">${item.data.consensus.target_price}</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">Upside</span>
+                                <span className="font-bold">{item.data.consensus.upside_potential}%</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">PB Ratio</span>
+                                <span className="font-bold">{item.data.price.pb_ratio}</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">RSI (14)</span>
+                                <span className="font-bold">{item.data.technicals.rsi}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                )}
               </CardHeader>
               <CardContent className="px-2">
                 <div className="space-y-1">
@@ -389,19 +518,32 @@ export default function Home() {
                     <p className="text-xs text-slate-400 text-center py-4">No history yet</p>
                   )}
                   {history.map((item) => (
-                    <button
+                    <div
                       key={item.id}
-                      onClick={() => setData(item.data)}
-                      className={`w-full text-left p-3 rounded-lg transition-all hover:bg-slate-50 group flex justify-between items-center ${data?.ticker === item.ticker ? 'bg-blue-50 border-l-4 border-blue-600' : ''}`}
+                      className={`group relative flex items-center gap-2 p-2 rounded-lg transition-all hover:bg-slate-50 ${data?.ticker === item.ticker ? 'bg-blue-50/50' : ''}`}
                     >
-                      <div>
-                        <div className="font-bold text-slate-900">{item.ticker}</div>
+                      <Checkbox 
+                        checked={selectedForCompare.includes(item.id)}
+                        onCheckedChange={() => toggleSelectForCompare(item.id)}
+                        className="h-4 w-4"
+                      />
+                      <button
+                        onClick={() => setData(item.data)}
+                        className="flex-1 text-left"
+                      >
+                        <div className="font-bold text-slate-900 text-sm">{item.ticker}</div>
                         <div className="text-[10px] text-slate-400">{item.timestamp}</div>
+                      </button>
+                      <div className="text-right mr-6">
+                        <div className="font-bold text-slate-700 text-xs">${item.price.toFixed(2)}</div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-bold text-slate-700">${item.price.toFixed(2)}</div>
-                      </div>
-                    </button>
+                      <button 
+                        onClick={() => deleteHistoryItem(item.id)}
+                        className="absolute right-2 opacity-0 group-hover:opacity-100 p-1 hover:text-rose-500 transition-all"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
                   ))}
                 </div>
               </CardContent>
@@ -411,8 +553,8 @@ export default function Home() {
       </div>
       
       {/* Footer */}
-      <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs print:hidden">
-        <p>© 2026 Stock Research Hub v3.0 • Data provided by Yahoo Finance & Google News</p>
+      <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs">
+        <p>© 2026 Stock Research Hub v3.1 • Data provided by Yahoo Finance & Google News</p>
       </footer>
     </div>
   );
