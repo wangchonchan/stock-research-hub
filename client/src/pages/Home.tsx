@@ -447,6 +447,19 @@ export default function Home() {
                         <p className="text-xs text-slate-500 mt-1">
                           资金流代理值(USD)：{formatLargeNumber(data.capital_flow?.net_flow_proxy_usd ?? "N/A")}
                         </p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">特大盘资金流向</p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">小盘资金流向</p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">分类型资金流入</p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
                       </div>
                     </div>
                   </CardContent>
