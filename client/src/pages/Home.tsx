@@ -89,6 +89,15 @@ interface StockData {
   };
   news: NewsItem[];
   checklists: ChecklistItem[];
+  capital_flow?: {
+    market_bucket: string;
+    market_cap: number | string;
+    volume: number | string;
+    avg_volume_10d: number | string;
+    volume_ratio: number | string;
+    estimated_flow_intensity: string;
+    net_flow_proxy_usd: number | string;
+  };
 }
 
 interface HistoryItem {

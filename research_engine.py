@@ -48,7 +48,16 @@ class StockResearchEngine:
                 "cci_14": "N/A"
             },
             "news": [],
-            "checklists": [] # List of objects for better ordering
+            "checklists": [], # List of objects for better ordering
+            "capital_flow": {
+                "market_bucket": "N/A",
+                "market_cap": "N/A",
+                "volume": "N/A",
+                "avg_volume_10d": "N/A",
+                "volume_ratio": "N/A",
+                "estimated_flow_intensity": "N/A",
+                "net_flow_proxy_usd": "N/A"
+            }
         }
 
     def _summarize_description(self, text: str, max_words: int = 30) -> str:
@@ -183,6 +192,41 @@ class StockResearchEngine:
                         "target_price": round(float(target), 2) if target else "N/A",
                         "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1) if target and current_price > 0 else "N/A"
                     })
+
+                    market_cap = info.get("marketCap")
+                    volume = info.get("volume")
+                    avg_vol = info.get("averageVolume10days") or info.get("averageVolume")
+                    bucket = "N/A"
+                    if isinstance(market_cap, (int, float)):
+                        if market_cap >= 200_000_000_000:
+                            bucket = "特大盘"
+                        elif market_cap >= 10_000_000_000:
+                            bucket = "大盘"
+                        elif market_cap >= 2_000_000_000:
+                            bucket = "中盘"
+                        else:
+                            bucket = "小盘"
+
+                    ratio = (float(volume) / float(avg_vol)) if volume and avg_vol else None
+                    intensity = "N/A"
+                    if ratio is not None:
+                        if ratio >= 1.5:
+                            intensity = "强流入/强成交"
+                        elif ratio >= 1.0:
+                            intensity = "中性偏强"
+                        else:
+                            intensity = "偏弱"
+
+                    net_flow_proxy = (float(volume) * current_price) if volume and current_price else "N/A"
+                    self.data["capital_flow"] = {
+                        "market_bucket": bucket,
+                        "market_cap": float(market_cap) if market_cap else "N/A",
+                        "volume": float(volume) if volume else "N/A",
+                        "avg_volume_10d": float(avg_vol) if avg_vol else "N/A",
+                        "volume_ratio": round(ratio, 2) if ratio is not None else "N/A",
+                        "estimated_flow_intensity": intensity,
+                        "net_flow_proxy_usd": round(net_flow_proxy, 2) if isinstance(net_flow_proxy, (int, float)) else "N/A"
+                    }
             except: pass
 
             self._fetch_google_news()
