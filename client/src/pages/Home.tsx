@@ -189,13 +189,13 @@ export default function Home() {
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
-            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.1</h1>
+            <h1 className="text-2xl font-bold text-slate-900">股票研究中心 v3.1</h1>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex w-full md:w-auto gap-2">
-            <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
+            <Input placeholder="股票代码（例如 TSLA）" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
             <Button type="submit" disabled={loading}>
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-              Update
+              更新
             </Button>
           </form>
         </div>
@@ -206,7 +206,7 @@ export default function Home() {
             {!data && !loading && (
               <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200">
                 <BarChart3 className="mx-auto h-12 w-12 text-slate-300 mb-4" />
-                <h2 className="text-xl font-medium text-slate-600">Enter a stock ticker to start research</h2>
+                <h2 className="text-xl font-medium text-slate-600">输入股票代码开始分析</h2>
               </div>
             )}
 
@@ -229,7 +229,7 @@ export default function Home() {
                         <p className="text-slate-400 text-sm max-w-2xl leading-relaxed">
                           {data.description}
                         </p>
-                        <p className="text-slate-500 text-xs mt-2">Last Updated: {data.updated_at} (HKT)</p>
+                        <p className="text-slate-500 text-xs mt-2">最后更新：{data.updated_at}（HKT）</p>
                       </div>
                       <div className="text-right">
                         <div className="text-4xl font-bold">${data.price.current_price.toFixed(2)}</div>
@@ -242,21 +242,21 @@ export default function Home() {
                     
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">Consensus</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">分析师共识</p>
                         <p className="text-lg font-bold text-blue-400">{data.consensus.recommendation}</p>
                       </div>
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">Target Price</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">目标价</p>
                         <p className="text-lg font-bold">${data.consensus.target_price}</p>
                       </div>
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">Upside</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">上行空间</p>
                         <p className={`text-lg font-bold ${Number(data.consensus.upside_potential) > 0 ? "text-emerald-400" : "text-rose-400"}`}>
                           {data.consensus.upside_potential}%
                         </p>
                       </div>
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">PB Ratio</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">市净率(PB)</p>
                         <p className="text-lg font-bold">{data.price.pb_ratio}</p>
                       </div>
                     </div>
@@ -269,7 +269,7 @@ export default function Home() {
                     <CardHeader>
                       <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                         <BarChart3 size={16} className="text-blue-600" />
-                        Revenue Trend (Last 4 Quarters)
+                        营收趋势（近4季）
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -295,7 +295,7 @@ export default function Home() {
                     <CardHeader>
                       <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                         <Activity size={16} className="text-emerald-600" />
-                        Net Income Trend
+                        净利润趋势
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -323,29 +323,29 @@ export default function Home() {
                   <Card>
                     <CardHeader className="flex flex-row items-center gap-2">
                       <TrendingUp className="h-5 w-5 text-blue-600" />
-                      <CardTitle>Key Fundamentals ({data.fundamentals.quarter})</CardTitle>
+                      <CardTitle>核心基本面（{data.fundamentals.quarter}）</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">Revenue</span>
+                        <span className="text-slate-500">营收</span>
                         <span className="font-semibold">{formatLargeNumber(data.fundamentals.revenue)}</span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">YoY Growth</span>
+                        <span className="text-slate-500">同比增长</span>
                         <span className={`font-semibold ${typeof data.fundamentals.revenue_yoy === 'number' && data.fundamentals.revenue_yoy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                           {typeof data.fundamentals.revenue_yoy === 'number' ? `${data.fundamentals.revenue_yoy > 0 ? '+' : ''}${data.fundamentals.revenue_yoy}%` : data.fundamentals.revenue_yoy}
                         </span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">Gross Margin</span>
+                        <span className="text-slate-500">毛利率</span>
                         <span className="font-semibold">{data.fundamentals.gross_margin}{typeof data.fundamentals.gross_margin === 'number' ? '%' : ''}</span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">Net Margin</span>
+                        <span className="text-slate-500">净利率</span>
                         <span className="font-semibold">{data.fundamentals.net_margin}{typeof data.fundamentals.net_margin === 'number' ? '%' : ''}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-500">Cash Reserves</span>
+                        <span className="text-slate-500">现金储备</span>
                         <span className="font-semibold">{formatLargeNumber(data.fundamentals.cash_reserves)}</span>
                       </div>
                     </CardContent>
@@ -354,7 +354,7 @@ export default function Home() {
                   <Card>
                     <CardHeader className="flex flex-row items-center gap-2">
                       <Activity className="h-5 w-5 text-blue-600" />
-                      <CardTitle>Technical Indicators</CardTitle>
+                      <CardTitle>技术指标</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex justify-between border-b pb-2">
@@ -383,15 +383,16 @@ export default function Home() {
                   </Card>
                 </div>
 
-                {/* Smart Checklist */}
+                {/* Analyst Consensus Only */}
                 <Card className="shadow-sm border-slate-200">
                   <CardHeader>
                     <CardTitle className="text-lg font-bold flex items-center gap-2">
                       <CheckCircle2 className="text-blue-600" />
-                      Smart Investment Checklist
+                      分析师共识观察（仅供信息展示）
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
+                    <p className="text-xs text-slate-500 mb-4">本页面不提供投资建议，仅展示分析师共识与客观指标。</p>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       {data.checklists.map((item, idx) => (
                         <div key={idx} className={`p-4 rounded-xl border-2 transition-all ${item.triggered ? "border-emerald-100 bg-emerald-50/30" : "border-slate-100 bg-slate-50/30"}`}>
@@ -409,12 +410,38 @@ export default function Home() {
                   </CardContent>
                 </Card>
 
+                <Card className="shadow-sm border-slate-200">
+                  <CardHeader>
+                    <CardTitle className="text-lg font-bold">资金流入分析（实时）</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">大盘资金流向</p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">特大盘资金流向</p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">小盘资金流向</p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">分类型资金流入</p>
+                        <p className="font-semibold">实时接口接入中（预留）</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
                 {/* News & Sentiment */}
                 <Card className="shadow-sm border-slate-200">
                   <CardHeader>
                     <CardTitle className="text-lg font-bold flex items-center gap-2">
                       <Newspaper className="text-blue-600" />
-                      Latest News & Sentiment Analysis
+                      最新资讯与情绪分析
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -463,7 +490,7 @@ export default function Home() {
               <CardHeader className="pb-3 flex flex-row items-center justify-between">
                 <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                   <Clock size={16} />
-                  History
+                  历史记录
                 </CardTitle>
                 {selectedForCompare.length === 2 && (
                   <Dialog open={isCompareOpen} onOpenChange={setIsCompareOpen}>
@@ -474,7 +501,7 @@ export default function Home() {
                     </DialogTrigger>
                     <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
                       <DialogHeader>
-                        <DialogTitle>Stock Comparison</DialogTitle>
+                        <DialogTitle>股票对比</DialogTitle>
                       </DialogHeader>
                       <div className="grid grid-cols-2 gap-4 mt-4">
                         {getCompareItems().map((item) => (
@@ -485,19 +512,19 @@ export default function Home() {
                             </div>
                             <div className="space-y-2 text-sm">
                               <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">Recommendation</span>
+                                <span className="text-slate-500">分析师共识</span>
                                 <span className="font-bold">{item.data.consensus.recommendation}</span>
                               </div>
                               <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">Target Price</span>
+                                <span className="text-slate-500">目标价</span>
                                 <span className="font-bold">${item.data.consensus.target_price}</span>
                               </div>
                               <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">Upside</span>
+                                <span className="text-slate-500">上行空间</span>
                                 <span className="font-bold">{item.data.consensus.upside_potential}%</span>
                               </div>
                               <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">PB Ratio</span>
+                                <span className="text-slate-500">市净率(PB)</span>
                                 <span className="font-bold">{item.data.price.pb_ratio}</span>
                               </div>
                               <div className="flex justify-between border-b py-1">
@@ -515,7 +542,7 @@ export default function Home() {
               <CardContent className="px-2">
                 <div className="space-y-1">
                   {history.length === 0 && (
-                    <p className="text-xs text-slate-400 text-center py-4">No history yet</p>
+                    <p className="text-xs text-slate-400 text-center py-4">暂无历史记录</p>
                   )}
                   {history.map((item) => (
                     <div
@@ -554,7 +581,7 @@ export default function Home() {
       
       {/* Footer */}
       <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs">
-        <p>© 2026 Stock Research Hub v3.1 • Data provided by Yahoo Finance & Google News</p>
+        <p>© 2026 股票研究中心 v3.1 • 数据来源：Yahoo Finance 与 Google News</p>
       </footer>
     </div>
   );
