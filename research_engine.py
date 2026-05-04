@@ -156,6 +156,8 @@ class StockResearchEngine:
                 hist = t.history(period="1y")
                 if hist.empty:
                     hist = t.history(period="1mo")
+            except Exception:
+                hist = pd.DataFrame()
             except Exception as e:
                 err = str(e)
                 if "CONNECT tunnel failed" in err or "curl: (56)" in err:

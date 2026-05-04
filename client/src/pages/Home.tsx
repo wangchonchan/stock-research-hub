@@ -427,6 +427,26 @@ export default function Home() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                       <div className="p-4 rounded-xl bg-slate-50 border">
                         <p className="text-slate-500 mb-1">大盘资金流向</p>
+                        <p className="font-semibold">{data.capital_flow?.market_bucket ?? "N/A"}</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">特大盘资金流向</p>
+                        <p className="font-semibold">{formatLargeNumber(data.capital_flow?.market_cap ?? "N/A")}</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">小盘资金流向</p>
+                        <p className="font-semibold">
+                          成交量：{typeof data.capital_flow?.volume === "number" ? data.capital_flow?.volume.toLocaleString() : data.capital_flow?.volume ?? "N/A"}
+                        </p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">分类型资金流入</p>
+                        <p className="font-semibold">
+                          10日量比：{data.capital_flow?.volume_ratio ?? "N/A"} ｜ 资金强度：{data.capital_flow?.estimated_flow_intensity ?? "N/A"}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          资金流代理值(USD)：{formatLargeNumber(data.capital_flow?.net_flow_proxy_usd ?? "N/A")}
+                        </p>
                         <p className="font-semibold">实时接口接入中（预留）</p>
                       </div>
                       <div className="p-4 rounded-xl bg-slate-50 border">
