@@ -5,7 +5,7 @@
   "serverless": false,
   "ports": [
     {
-      "port": 3000,
+      "port": 7860,
       "protocol": "http"
     }
   ]
