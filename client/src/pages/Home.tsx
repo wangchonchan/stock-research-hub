@@ -8,6 +8,9 @@ import {
   Activity, Clock, CheckCircle2, AlertCircle, 
   Info, Newspaper, ExternalLink, Download,
   TrendingDown, Minus
+  Activity, Clock, X, CheckCircle2, AlertCircle, 
+  Info, Newspaper, ExternalLink, TrendingDown, Minus,
+  ArrowLeftRight
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -181,6 +184,15 @@ export default function Home() {
               </Button>
             )}
           </div>
+            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.1</h1>
+          </div>
+          <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex w-full md:w-auto gap-2">
+            <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
+            <Button type="submit" disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+              Update
+            </Button>
+          </form>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -212,6 +224,7 @@ export default function Home() {
                         <p className="text-slate-400 text-sm max-w-2xl leading-relaxed">
                           {data.description}
                         </p>
+                        <p className="text-slate-500 text-xs mt-2">Last Updated: {data.updated_at} (HKT)</p>
                       </div>
                       <div className="text-right">
                         <div className="text-4xl font-bold">${data.price.current_price.toFixed(2)}</div>
@@ -300,6 +313,71 @@ export default function Home() {
                   </Card>
                 </div>
 
+                {/* Technical Indicators Grid (RESTORED) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader className="flex flex-row items-center gap-2">
+                      <TrendingUp className="h-5 w-5 text-blue-600" />
+                      <CardTitle>Key Fundamentals ({data.fundamentals.quarter})</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Revenue</span>
+                        <span className="font-semibold">{formatLargeNumber(data.fundamentals.revenue)}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">YoY Growth</span>
+                        <span className={`font-semibold ${typeof data.fundamentals.revenue_yoy === 'number' && data.fundamentals.revenue_yoy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {typeof data.fundamentals.revenue_yoy === 'number' ? `${data.fundamentals.revenue_yoy > 0 ? '+' : ''}${data.fundamentals.revenue_yoy}%` : data.fundamentals.revenue_yoy}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Gross Margin</span>
+                        <span className="font-semibold">{data.fundamentals.gross_margin}{typeof data.fundamentals.gross_margin === 'number' ? '%' : ''}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">Net Margin</span>
+                        <span className="font-semibold">{data.fundamentals.net_margin}{typeof data.fundamentals.net_margin === 'number' ? '%' : ''}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Cash Reserves</span>
+                        <span className="font-semibold">{formatLargeNumber(data.fundamentals.cash_reserves)}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="flex flex-row items-center gap-2">
+                      <Activity className="h-5 w-5 text-blue-600" />
+                      <CardTitle>Technical Indicators</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">RSI (14)</span>
+                        <span className={`font-semibold ${typeof data.technicals.rsi === 'number' && (data.technicals.rsi > 70 || data.technicals.rsi < 30) ? 'text-orange-600' : 'text-slate-900'}`}>
+                          {data.technicals.rsi}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">MA (5)</span>
+                        <span className="font-semibold">${data.technicals.ma_5}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">MA (60)</span>
+                        <span className="font-semibold">${data.technicals.ma_60}</span>
+                      </div>
+                      <div className="flex justify-between border-b pb-2">
+                        <span className="text-slate-500">OSC (20)</span>
+                        <span className="font-semibold">{data.technicals.osc_20}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">CCI (14)</span>
+                        <span className="font-semibold">{data.technicals.cci_14}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
                 {/* Smart Checklist */}
                 <Card className="shadow-sm border-slate-200">
                   <CardHeader>
@@ -382,6 +460,54 @@ export default function Home() {
                   <Clock size={16} />
                   Recent Research
                 </CardTitle>
+                  History
+                </CardTitle>
+                {selectedForCompare.length === 2 && (
+                  <Dialog open={isCompareOpen} onOpenChange={setIsCompareOpen}>
+                    <DialogTrigger asChild>
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1">
+                        <ArrowLeftRight size={12} /> Compare
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                      <DialogHeader>
+                        <DialogTitle>Stock Comparison</DialogTitle>
+                      </DialogHeader>
+                      <div className="grid grid-cols-2 gap-4 mt-4">
+                        {getCompareItems().map((item) => (
+                          <div key={item.id} className="space-y-4">
+                            <div className="p-4 bg-slate-900 text-white rounded-xl">
+                              <h3 className="text-2xl font-bold">{item.ticker}</h3>
+                              <p className="text-slate-400 text-sm">${item.price.toFixed(2)}</p>
+                            </div>
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">Recommendation</span>
+                                <span className="font-bold">{item.data.consensus.recommendation}</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">Target Price</span>
+                                <span className="font-bold">${item.data.consensus.target_price}</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">Upside</span>
+                                <span className="font-bold">{item.data.consensus.upside_potential}%</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">PB Ratio</span>
+                                <span className="font-bold">{item.data.price.pb_ratio}</span>
+                              </div>
+                              <div className="flex justify-between border-b py-1">
+                                <span className="text-slate-500">RSI (14)</span>
+                                <span className="font-bold">{item.data.technicals.rsi}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                )}
               </CardHeader>
               <CardContent className="px-2">
                 <div className="space-y-1">
@@ -413,6 +539,8 @@ export default function Home() {
       {/* Footer */}
       <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs print:hidden">
         <p>© 2026 Stock Research Hub v3.0 • Data provided by Yahoo Finance & Google News</p>
+      <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs">
+        <p>© 2026 Stock Research Hub v3.1 • Data provided by Yahoo Finance & Google News</p>
       </footer>
     </div>
   );
