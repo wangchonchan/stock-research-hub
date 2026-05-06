@@ -186,16 +186,14 @@ class StockResearchEngine:
                 hist = t.history(period="1y")
                 if hist.empty:
                     hist = t.history(period="1mo")
-            except Exception:
-                hist = pd.DataFrame()
             except Exception as e:
+                hist = pd.DataFrame()
                 err = str(e)
                 if "CONNECT tunnel failed" in err or "curl: (56)" in err:
                     self.data["diagnostics"].append("price_history_unavailable: network/proxy blocked upstream market data")
-                    self.data["data_source_status"] = "degraded"
                 else:
                     self.data["diagnostics"].append(f"price_history_unavailable: {err}")
-                    self.data["data_source_status"] = "degraded"
+                self.data["data_source_status"] = "degraded"
             
             current_price = 0
             if not hist.empty:
@@ -259,7 +257,9 @@ class StockResearchEngine:
                         "estimated_flow_intensity": intensity,
                         "net_flow_proxy_usd": round(net_flow_proxy, 2) if isinstance(net_flow_proxy, (int, float)) else "N/A"
                     }
-            except: pass
+            except Exception as e:
+                self.data["diagnostics"].append(f"profile_unavailable: {e}")
+                self.data["data_source_status"] = "degraded"
 
             self._fetch_google_news()
 
@@ -299,7 +299,9 @@ class StockResearchEngine:
                     cash = q_bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in q_bs.index else \
                            q_bs.loc['Cash Cash Equivalents And Short Term Investments'].iloc[0] if 'Cash Cash Equivalents And Short Term Investments' in q_bs.index else "N/A"
                     self.data["fundamentals"]["cash_reserves"] = cash
-            except: pass
+            except Exception as e:
+                self.data["diagnostics"].append(f"fundamentals_unavailable: {e}")
+                self.data["data_source_status"] = "degraded"
 
             # Smart Checklists / AI research signals should always be populated,
             # even when one upstream market-data source is temporarily unavailable.
