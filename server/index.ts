@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Express } from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -49,6 +49,23 @@ function hasUsableResearchData(result: ResearchResult): boolean {
   return hasPrice || hasProfile;
 }
 
+async function setupFrontend(app: Express, staticPath: string) {
+  if (process.env.NODE_ENV === "production") {
+    app.use(express.static(staticPath));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(staticPath, "index.html"));
+    });
+    return;
+  }
+
+  const { createServer: createViteServer } = await import("vite");
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa",
+  });
+  app.use(vite.middlewares);
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -57,7 +74,6 @@ async function startServer() {
   const staticPath = path.resolve(process.cwd(), "dist", "public");
   console.log(`Serving static files from: ${staticPath}`);
 
-  app.use(express.static(staticPath));
   app.use(express.json());
 
   // Health check endpoint for Hugging Face
@@ -161,9 +177,7 @@ async function startServer() {
     });
   });
 
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(staticPath, "index.html"));
-  });
+  await setupFrontend(app, staticPath);
 
   const port = process.env.PORT || 3000;
   server.listen(Number(port), "0.0.0.0", () => {
