@@ -305,6 +305,7 @@ class StockResearchEngine:
                 progress=False,
                 threads=True,
                 auto_adjust=False,
+                timeout=5,
             )
         except Exception as e:
             self.data["diagnostics"].append(f"flow_history_unavailable: {e}")
