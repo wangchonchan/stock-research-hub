@@ -7,7 +7,8 @@ import {
   Loader2, Search, TrendingUp, BarChart3, 
   Activity, Clock, CheckCircle2, AlertCircle, 
   Info, Newspaper, ExternalLink, Download,
-  TrendingDown, Minus, ArrowLeftRight, Wallet
+  TrendingDown, Minus, ArrowLeftRight, Wallet,
+  Globe
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -53,6 +54,11 @@ interface CapitalFlow {
   volume_ratio: number | string;
   estimated_flow_intensity: string;
   net_flow_proxy_usd: number | string;
+  market_wide_flow: {
+    mega_cap: string;
+    large_cap: string;
+    small_cap: string;
+  };
 }
 
 interface StockData {
@@ -103,7 +109,7 @@ interface HistoryItem {
   data: StockData;
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history_v9";
+const HISTORY_STORAGE_KEY = "stock_research_history_v10";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
@@ -128,7 +134,7 @@ export default function Home() {
   }, [history]);
 
   const formatLargeNumber = (num: number | string) => {
-    if (typeof num !== 'number') return num;
+    if (typeof num !== 'number' || isNaN(num)) return num;
     if (num >= 1e12) return `$${(num / 1e12).toFixed(2)}T`;
     if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
     if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
@@ -168,6 +174,12 @@ export default function Home() {
     window.print();
   };
 
+  const getFlowColor = (intensity: string) => {
+    if (intensity.includes("Inflow") || intensity.includes("流入")) return "text-emerald-600 bg-emerald-50 border-emerald-100";
+    if (intensity.includes("Outflow") || intensity.includes("流出")) return "text-rose-600 bg-rose-50 border-rose-100";
+    return "text-slate-600 bg-slate-50 border-slate-100";
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 print:p-0 print:bg-white">
       <div className="max-w-6xl mx-auto" ref={reportRef}>
@@ -175,7 +187,7 @@ export default function Home() {
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 print:hidden">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
-            <h1 className="text-2xl font-bold text-slate-900">股票研究中心 v3.1</h1>
+            <h1 className="text-2xl font-bold text-slate-900">股票研究中心 v3.2</h1>
           </div>
           <div className="flex gap-2 w-full md:w-auto">
             <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex flex-1 gap-2">
@@ -226,7 +238,7 @@ export default function Home() {
                         <p className="text-slate-500 text-xs mt-2">最后更新: {data.updated_at} (HKT)</p>
                       </div>
                       <div className="text-right">
-                        <div className="text-4xl font-bold">${data.price.current_price.toFixed(2)}</div>
+                        <div className="text-4xl font-bold">${data.price.current_price ? data.price.current_price.toFixed(2) : "0.00"}</div>
                         <div className={`flex items-center justify-end gap-1 font-medium ${data.price.change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                           {data.price.change >= 0 ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
                           {data.price.change >= 0 ? "+" : ""}{data.price.change_percent}%
@@ -258,62 +270,79 @@ export default function Home() {
                 </div>
 
                 {/* Capital Flow Analysis Section */}
-                <Card className="shadow-sm border-slate-200 overflow-hidden">
-                  <CardHeader className="bg-slate-50/50 border-b">
-                    <CardTitle className="text-lg font-bold flex items-center gap-2">
-                      <Wallet className="text-blue-600" />
-                      资金流入分析 (Capital Flow Analysis)
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="space-y-4">
-                        <div>
-                          <p className="text-sm text-slate-500 mb-1">市值分类</p>
-                          <p className="text-xl font-bold text-slate-900">{data.capital_flow.market_bucket}</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <Card className="md:col-span-2 shadow-sm border-slate-200 overflow-hidden">
+                    <CardHeader className="bg-slate-50/50 border-b">
+                      <CardTitle className="text-lg font-bold flex items-center gap-2">
+                        <Wallet className="text-blue-600" />
+                        个股资金分析 (Stock Capital Flow)
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-4">
+                          <div>
+                            <p className="text-sm text-slate-500 mb-1">市值分类</p>
+                            <p className="text-xl font-bold text-slate-900">{data.capital_flow.market_bucket}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-slate-500 mb-1">总市值</p>
+                            <p className="text-xl font-bold text-slate-900">{formatLargeNumber(data.capital_flow.market_cap)}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-slate-500 mb-1">预估净流向 (USD Proxy)</p>
+                            <p className="text-xl font-bold text-slate-900">{formatLargeNumber(data.capital_flow.net_flow_proxy_usd)}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm text-slate-500 mb-1">总市值</p>
-                          <p className="text-xl font-bold text-slate-900">{formatLargeNumber(data.capital_flow.market_cap)}</p>
-                        </div>
-                      </div>
-                      <div className="space-y-4">
-                        <div>
-                          <p className="text-sm text-slate-500 mb-1">当日成交量</p>
-                          <p className="text-xl font-bold text-slate-900">{Number(data.capital_flow.volume).toLocaleString()}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-slate-500 mb-1">10日平均成交量</p>
-                          <p className="text-xl font-bold text-slate-900">{Number(data.capital_flow.avg_volume_10d).toLocaleString()}</p>
-                        </div>
-                      </div>
-                      <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                        <div className="mb-3">
-                          <p className="text-sm text-blue-600 font-bold mb-1">成交量比率 (Volume Ratio)</p>
-                          <p className="text-2xl font-black text-blue-900">{data.capital_flow.volume_ratio}x</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-blue-600 font-bold mb-1">资金强度评估</p>
-                          <Badge className="bg-blue-600 text-white">
-                            {data.capital_flow.estimated_flow_intensity}
-                          </Badge>
+                        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col justify-between">
+                          <div>
+                            <p className="text-sm text-blue-600 font-bold mb-1">成交量比率 (Volume Ratio)</p>
+                            <p className="text-3xl font-black text-blue-900">{data.capital_flow.volume_ratio}x</p>
+                            <p className="text-xs text-blue-500 mt-1">当日成交量 / 10日均量</p>
+                          </div>
+                          <div className="mt-4">
+                            <p className="text-sm text-blue-600 font-bold mb-2">资金强度评估</p>
+                            <Badge className="bg-blue-600 text-white text-sm py-1 px-3">
+                              {data.capital_flow.estimated_flow_intensity}
+                            </Badge>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="mt-6 pt-6 border-t flex flex-col md:flex-row justify-between items-center gap-4">
-                      <div className="flex items-center gap-2">
-                        <Info size={16} className="text-slate-400" />
-                        <p className="text-xs text-slate-500">
-                          注：资金流入强度基于当日成交量与10日均量的对比估算。
-                        </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="shadow-sm border-slate-200 overflow-hidden">
+                    <CardHeader className="bg-slate-50/50 border-b">
+                      <CardTitle className="text-lg font-bold flex items-center gap-2">
+                        <Globe className="text-blue-600" />
+                        大盘资金流向
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-6 space-y-4">
+                      <div className="flex justify-between items-center p-3 rounded-lg border bg-white">
+                        <span className="text-sm font-medium text-slate-600">特大盘 (Mega)</span>
+                        <Badge className={getFlowColor(data.capital_flow.market_wide_flow.mega_cap)}>
+                          {data.capital_flow.market_wide_flow.mega_cap}
+                        </Badge>
                       </div>
-                      <div className="text-right">
-                        <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">预估净流向 (USD Proxy)</p>
-                        <p className="text-lg font-bold text-slate-900">{formatLargeNumber(data.capital_flow.net_flow_proxy_usd)}</p>
+                      <div className="flex justify-between items-center p-3 rounded-lg border bg-white">
+                        <span className="text-sm font-medium text-slate-600">大盘 (Large)</span>
+                        <Badge className={getFlowColor(data.capital_flow.market_wide_flow.large_cap)}>
+                          {data.capital_flow.market_wide_flow.large_cap}
+                        </Badge>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                      <div className="flex justify-between items-center p-3 rounded-lg border bg-white">
+                        <span className="text-sm font-medium text-slate-600">小盘 (Small)</span>
+                        <Badge className={getFlowColor(data.capital_flow.market_wide_flow.small_cap)}>
+                          {data.capital_flow.market_wide_flow.small_cap}
+                        </Badge>
+                      </div>
+                      <p className="text-[10px] text-slate-400 text-center mt-2">
+                        基于 SPY 和 IWM 指数 ETF 的实时流向估算
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
 
                 {/* Charts Section */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -534,7 +563,7 @@ export default function Home() {
                           <p className="text-[10px] text-slate-400">{item.timestamp}</p>
                         </div>
                         <div className="text-right">
-                          <p className="font-bold text-slate-900">${item.price.toFixed(2)}</p>
+                          <p className="font-bold text-slate-900">${item.price ? item.price.toFixed(2) : "0.00"}</p>
                           <ArrowLeftRight size={14} className="ml-auto text-slate-300 group-hover:text-blue-500" />
                         </div>
                       </button>

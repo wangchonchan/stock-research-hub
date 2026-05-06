@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine v3.1 - Fixed bugs and enhanced with Capital Flow Analysis
+Stock Research Engine v3.2 - Robust Data Fetching & Comprehensive Capital Flow Analysis
 """
 
 import json
@@ -50,7 +50,12 @@ class StockResearchEngine:
                 "avg_volume_10d": "N/A",
                 "volume_ratio": "N/A",
                 "estimated_flow_intensity": "N/A",
-                "net_flow_proxy_usd": "N/A"
+                "net_flow_proxy_usd": "N/A",
+                "market_wide_flow": {
+                    "mega_cap": "Neutral",
+                    "large_cap": "Neutral",
+                    "small_cap": "Neutral"
+                }
             },
             "news": [],
             "checklists": [],
@@ -145,15 +150,43 @@ class StockResearchEngine:
         except:
             return {}
 
+    def _get_market_wide_flow(self):
+        # Proxy for market-wide flow using major ETFs
+        # SPY (Large/Mega), IWM (Small)
+        flows = {"mega_cap": "Neutral", "large_cap": "Neutral", "small_cap": "Neutral"}
+        try:
+            spy = yf.Ticker("SPY")
+            iwm = yf.Ticker("IWM")
+            
+            def get_intensity(ticker_obj):
+                h = ticker_obj.history(period="5d")
+                if len(h) < 2: return "Neutral"
+                vol = h['Volume'].iloc[-1]
+                avg_vol = h['Volume'].mean()
+                change = (h['Close'].iloc[-1] - h['Close'].iloc[-2]) / h['Close'].iloc[-2]
+                if vol > avg_vol * 1.2:
+                    return "Strong Inflow" if change > 0 else "Strong Outflow"
+                return "Moderate Inflow" if change > 0 else "Moderate Outflow"
+
+            flows["large_cap"] = get_intensity(spy)
+            flows["mega_cap"] = flows["large_cap"] # Simplified
+            flows["small_cap"] = get_intensity(iwm)
+        except:
+            pass
+        return flows
+
     def run_research(self):
         try:
             t = yf.Ticker(self.ticker)
             
             # 1. Price History & Technicals
             try:
+                # Try multiple periods if 1y fails
                 hist = t.history(period="1y")
                 if hist.empty:
                     hist = t.history(period="1mo")
+                if hist.empty:
+                    hist = t.history(period="5d")
                 
                 if not hist.empty:
                     current_price = float(hist['Close'].iloc[-1])
@@ -165,7 +198,12 @@ class StockResearchEngine:
                     })
                     self.data["technicals"].update(self._calculate_indicators(hist))
                 else:
-                    current_price = 0
+                    # Fallback to fast_info if history is empty
+                    try:
+                        current_price = t.fast_info['lastPrice']
+                        self.data["price"]["current_price"] = round(current_price, 3)
+                    except:
+                        current_price = 0
             except Exception as e:
                 self.data["diagnostics"].append(f"price_history_unavailable: {e}")
                 current_price = 0
@@ -182,16 +220,18 @@ class StockResearchEngine:
                     self.data["price"]["pe_ratio"] = round(float(info.get('trailingPE', 0)), 2) if info.get('trailingPE') else "N/A"
                     
                     target = info.get('targetMeanPrice')
-                    self.data["consensus"].update({
-                        "recommendation": str(info.get('recommendationKey', 'N/A')).upper(),
-                        "target_price": round(float(target), 2) if target else "N/A",
-                        "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1) if target and current_price > 0 else "N/A"
-                    })
+                    if target and current_price > 0:
+                        self.data["consensus"].update({
+                            "recommendation": str(info.get('recommendationKey', 'N/A')).upper(),
+                            "target_price": round(float(target), 2),
+                            "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1)
+                        })
 
                     # Capital Flow Analysis
                     market_cap = info.get("marketCap")
-                    volume = info.get("volume")
+                    volume = info.get("volume") or info.get("regularMarketVolume")
                     avg_vol = info.get("averageVolume10days") or info.get("averageVolume")
+                    
                     bucket = "N/A"
                     if isinstance(market_cap, (int, float)):
                         if market_cap >= 200_000_000_000:
@@ -221,7 +261,8 @@ class StockResearchEngine:
                         "avg_volume_10d": float(avg_vol) if avg_vol else "N/A",
                         "volume_ratio": round(ratio, 2) if ratio is not None else "N/A",
                         "estimated_flow_intensity": intensity,
-                        "net_flow_proxy_usd": round(net_flow_proxy, 2) if isinstance(net_flow_proxy, (int, float)) else "N/A"
+                        "net_flow_proxy_usd": round(net_flow_proxy, 2) if isinstance(net_flow_proxy, (int, float)) else "N/A",
+                        "market_wide_flow": self._get_market_wide_flow()
                     }
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
