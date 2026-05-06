@@ -148,6 +148,36 @@ class StockResearchEngine:
         except:
             return {}
 
+
+    def _build_checklists(self):
+        rsi = self.data["technicals"]["rsi"]
+        pb = self.data["price"]["pb_ratio"]
+        rev_yoy = self.data["fundamentals"]["revenue_yoy"]
+
+        return [
+            {
+                "name": "技术面 RSI 观察",
+                "value": f"RSI: {rsi}",
+                "status": "超卖区" if isinstance(rsi, (int, float)) and rsi <= 35 else "超买区" if isinstance(rsi, (int, float)) and rsi >= 65 else "正常区间",
+                "triggered": isinstance(rsi, (int, float)) and (rsi <= 35 or rsi >= 65),
+                "description": "RSI 用于观察价格动能位置；低位/高位仅表示技术状态，不构成买卖建议。"
+            },
+            {
+                "name": "估值 PB 观察",
+                "value": f"PB: {pb}",
+                "status": "低 PB" if (isinstance(pb, (int, float)) and 0 < pb <= 1.5) else "正常区间",
+                "triggered": isinstance(pb, (int, float)) and 0 < pb <= 1.5,
+                "description": "PB 用于观察股价相对账面价值的估值位置，仅作为客观指标展示。"
+            },
+            {
+                "name": "营收增长观察",
+                "value": f"YoY: {rev_yoy}%" if isinstance(rev_yoy, (int, float)) else "N/A",
+                "status": "高增长" if (isinstance(rev_yoy, (int, float)) and rev_yoy > 20) else "负增长" if (isinstance(rev_yoy, (int, float)) and rev_yoy < 0) else "正常区间",
+                "triggered": isinstance(rev_yoy, (int, float)) and (rev_yoy > 20 or rev_yoy < 0),
+                "description": "同比营收用于观察公司增长变化；正负变化均需结合财报与行业背景解读。"
+            }
+        ]
+
     def run_research(self):
         try:
             t = yf.Ticker(self.ticker)
@@ -271,44 +301,13 @@ class StockResearchEngine:
                     self.data["fundamentals"]["cash_reserves"] = cash
             except: pass
 
-            # Smart Checklists
-            rsi = self.data["technicals"]["rsi"]
-            pb = self.data["price"]["pb_ratio"]
-            pe = self.data["price"]["pe_ratio"]
-            rev_yoy = self.data["fundamentals"]["revenue_yoy"]
-            
-            checklists = []
-            
-            # 1. RSI Monitor
-            checklists.append({
-                "name": "Technical RSI Monitor",
-                "value": f"RSI: {rsi}",
-                "status": "OVERSOLD" if isinstance(rsi, (int, float)) and rsi <= 35 else "OVERBOUGHT" if isinstance(rsi, (int, float)) and rsi >= 65 else "NORMAL",
-                "triggered": isinstance(rsi, (int, float)) and (rsi <= 35 or rsi >= 65),
-                "description": "RSI below 35 suggests oversold (potential buy), above 65 suggests overbought (potential risk)."
-            })
-            
-            # 2. Valuation Monitor
-            checklists.append({
-                "name": "Valuation (PB) Monitor",
-                "value": f"PB: {pb}",
-                "status": "UNDERVALUED" if (isinstance(pb, (int, float)) and 0 < pb <= 1.5) else "NORMAL",
-                "triggered": isinstance(pb, (int, float)) and 0 < pb <= 1.5,
-                "description": "PB ratio below 1.5 often indicates the stock is trading near or below its book value."
-            })
-            
-            # 3. Growth Monitor
-            checklists.append({
-                "name": "Revenue Growth Monitor",
-                "value": f"YoY: {rev_yoy}%" if isinstance(rev_yoy, (int, float)) else "N/A",
-                "status": "HIGH GROWTH" if (isinstance(rev_yoy, (int, float)) and rev_yoy > 20) else "STAGNANT" if (isinstance(rev_yoy, (int, float)) and rev_yoy < 0) else "NORMAL",
-                "triggered": isinstance(rev_yoy, (int, float)) and (rev_yoy > 20 or rev_yoy < 0),
-                "description": "Revenue growth > 20% is a strong positive signal; negative growth is a warning."
-            })
-
-            self.data["checklists"] = checklists
+            # Smart Checklists / AI research signals should always be populated,
+            # even when one upstream market-data source is temporarily unavailable.
+            self.data["checklists"] = self._build_checklists()
             return self.data
         except Exception as e:
+            if not self.data.get("checklists"):
+                self.data["checklists"] = self._build_checklists()
             self.data["diagnostics"].append(f"research_error: {e}")
             self.data["data_source_status"] = "degraded"
             print(f"Error in research: {e}", file=sys.stderr)

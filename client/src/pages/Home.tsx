@@ -8,7 +8,7 @@ import {
   Loader2, Search, TrendingUp, BarChart3, 
   Activity, Clock, X, CheckCircle2, AlertCircle, 
   Info, Newspaper, ExternalLink, TrendingDown, Minus,
-  ArrowLeftRight
+  ArrowLeftRight, Landmark, Waves, Database, Languages
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -88,6 +88,7 @@ interface StockData {
     cci_14: number | string;
   };
   news: NewsItem[];
+  checklists?: ChecklistItem[];
   checklists: ChecklistItem[];
   capital_flow?: {
     market_bucket: string;
@@ -235,6 +236,7 @@ export default function Home() {
                             {data.company_name}
                           </Badge>
                         </div>
+                        <p className="text-slate-500 text-xs mb-1 flex items-center gap-1"><Languages size={12} /> 公司简介（原文）</p>
                         <p className="text-slate-400 text-sm max-w-2xl leading-relaxed">
                           {data.description}
                         </p>
@@ -403,19 +405,59 @@ export default function Home() {
                   <CardContent>
                     <p className="text-xs text-slate-500 mb-4">本页面不提供投资建议，仅展示分析师共识与客观指标。</p>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {data.checklists.map((item, idx) => (
-                        <div key={idx} className={`p-4 rounded-xl border-2 transition-all ${item.triggered ? "border-emerald-100 bg-emerald-50/30" : "border-slate-100 bg-slate-50/30"}`}>
-                          <div className="flex justify-between items-start mb-2">
-                            <h4 className="font-bold text-slate-900 text-sm">{item.name}</h4>
-                            <Badge className={item.triggered ? "bg-emerald-500" : "bg-slate-400"}>
-                              {item.status}
-                            </Badge>
+                      {(data.checklists ?? []).length > 0 ? (
+                        (data.checklists ?? []).map((item, idx) => (
+                          <div key={idx} className={`p-4 rounded-xl border-2 transition-all ${item.triggered ? "border-emerald-100 bg-emerald-50/30" : "border-slate-100 bg-slate-50/30"}`}>
+                            <div className="flex justify-between items-start mb-2">
+                              <h4 className="font-bold text-slate-900 text-sm">{item.name}</h4>
+                              <Badge className={item.triggered ? "bg-emerald-500" : "bg-slate-400"}>
+                                {item.status}
+                              </Badge>
+                            </div>
+                            <p className="text-2xl font-black text-slate-900 mb-2">{item.value}</p>
+                            <p className="text-xs text-slate-500 leading-relaxed">{item.description}</p>
                           </div>
-                          <p className="text-2xl font-black text-slate-900 mb-2">{item.value}</p>
-                          <p className="text-xs text-slate-500 leading-relaxed">{item.description}</p>
+                        ))
+                      ) : (
+                        <div className="md:col-span-3 p-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                          AI 观察暂时不可用，请重新更新该股票数据。
                         </div>
-                      ))}
+                      )}
                     </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="shadow-sm border-slate-200">
+                  <CardHeader>
+                    <CardTitle className="text-lg font-bold flex items-center gap-2"><Waves size={18} className="text-blue-600" />资金流入分析（实时）</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1 flex items-center gap-1"><Landmark size={14} />大盘资金流向</p>
+                        <p className="font-semibold">{data.capital_flow?.market_bucket ?? "N/A"}</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">特大盘资金流向</p>
+                        <p className="font-semibold">{formatLargeNumber(data.capital_flow?.market_cap ?? "N/A")}</p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">小盘资金流向</p>
+                        <p className="font-semibold">
+                          成交量：{typeof data.capital_flow?.volume === "number" ? data.capital_flow?.volume.toLocaleString() : data.capital_flow?.volume ?? "N/A"}
+                        </p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-slate-50 border">
+                        <p className="text-slate-500 mb-1">分类型资金流入</p>
+                        <p className="font-semibold">
+                          10日量比：{data.capital_flow?.volume_ratio ?? "N/A"} ｜ 资金强度：{data.capital_flow?.estimated_flow_intensity ?? "N/A"}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          资金流代理值(USD)：{formatLargeNumber(data.capital_flow?.net_flow_proxy_usd ?? "N/A")}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-4 flex items-center gap-1"><Database size={12} />数据来源：Yahoo Finance 实时报价字段（marketCap / volume / averageVolume10days）计算。</p>
                   </CardContent>
                 </Card>
 
@@ -525,7 +567,7 @@ export default function Home() {
                   <Dialog open={isCompareOpen} onOpenChange={setIsCompareOpen}>
                     <DialogTrigger asChild>
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1">
-                        <ArrowLeftRight size={12} /> Compare
+                        <ArrowLeftRight size={12} /> 对比
                       </Button>
                     </DialogTrigger>
                     <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -610,6 +652,7 @@ export default function Home() {
       
       {/* Footer */}
       <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs">
+        <p className="mb-2">本页面不提供投资建议，仅展示分析师共识与客观指标。</p>
         <p>© 2026 股票研究中心 v3.1 • 数据来源：Yahoo Finance 与 Google News</p>
       </footer>
     </div>
