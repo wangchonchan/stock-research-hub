@@ -140,6 +140,19 @@ class StockResearchEngine:
             t = yf.Ticker(self.ticker)
             hist = t.history(period="1y")
             if hist.empty: hist = t.history(period="1mo")
+            hist = pd.DataFrame()
+            try:
+                hist = t.history(period="1y")
+                if hist.empty:
+                    hist = t.history(period="1mo")
+            except Exception as e:
+                hist = pd.DataFrame()
+                err = str(e)
+                if "CONNECT tunnel failed" in err or "curl: (56)" in err:
+                    self.data["diagnostics"].append("price_history_unavailable: network/proxy blocked upstream market data")
+                else:
+                    self.data["diagnostics"].append(f"price_history_unavailable: {err}")
+                self.data["data_source_status"] = "degraded"
             
             current_price = 0
             if not hist.empty:
@@ -169,6 +182,44 @@ class StockResearchEngine:
                         "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1) if target and current_price > 0 else "N/A"
                     })
             except: pass
+
+                    market_cap = info.get("marketCap")
+                    volume = info.get("volume")
+                    avg_vol = info.get("averageVolume10days") or info.get("averageVolume")
+                    bucket = "N/A"
+                    if isinstance(market_cap, (int, float)):
+                        if market_cap >= 200_000_000_000:
+                            bucket = "特大盘"
+                        elif market_cap >= 10_000_000_000:
+                            bucket = "大盘"
+                        elif market_cap >= 2_000_000_000:
+                            bucket = "中盘"
+                        else:
+                            bucket = "小盘"
+
+                    ratio = (float(volume) / float(avg_vol)) if volume and avg_vol else None
+                    intensity = "N/A"
+                    if ratio is not None:
+                        if ratio >= 1.5:
+                            intensity = "强流入/强成交"
+                        elif ratio >= 1.0:
+                            intensity = "中性偏强"
+                        else:
+                            intensity = "偏弱"
+
+                    net_flow_proxy = (float(volume) * current_price) if volume and current_price else "N/A"
+                    self.data["capital_flow"] = {
+                        "market_bucket": bucket,
+                        "market_cap": float(market_cap) if market_cap else "N/A",
+                        "volume": float(volume) if volume else "N/A",
+                        "avg_volume_10d": float(avg_vol) if avg_vol else "N/A",
+                        "volume_ratio": round(ratio, 2) if ratio is not None else "N/A",
+                        "estimated_flow_intensity": intensity,
+                        "net_flow_proxy_usd": round(net_flow_proxy, 2) if isinstance(net_flow_proxy, (int, float)) else "N/A"
+                    }
+            except Exception as e:
+                self.data["diagnostics"].append(f"profile_unavailable: {e}")
+                self.data["data_source_status"] = "degraded"
 
             self._fetch_google_news()
 
@@ -208,7 +259,9 @@ class StockResearchEngine:
                     cash = q_bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in q_bs.index else \
                            q_bs.loc['Cash Cash Equivalents And Short Term Investments'].iloc[0] if 'Cash Cash Equivalents And Short Term Investments' in q_bs.index else "N/A"
                     self.data["fundamentals"]["cash_reserves"] = cash
-            except: pass
+            except Exception as e:
+                self.data["diagnostics"].append(f"fundamentals_unavailable: {e}")
+                self.data["data_source_status"] = "degraded"
 
             # Smart Checklists
             rsi = self.data["technicals"]["rsi"]
