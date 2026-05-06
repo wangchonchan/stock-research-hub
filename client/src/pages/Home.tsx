@@ -109,6 +109,12 @@ interface HistoryItem {
   data: StockData;
 }
 
+interface StockResearchError {
+  error?: string;
+  details?: string;
+  diagnostics?: string[];
+}
+
 const HISTORY_STORAGE_KEY = "stock_research_history_v10";
 
 export default function Home() {
@@ -150,7 +156,16 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker: searchTicker }),
       });
-      if (!response.ok) throw new Error("Failed to fetch data");
+      if (!response.ok) {
+        let message = "Failed to fetch data";
+        try {
+          const errorPayload = (await response.json()) as StockResearchError;
+          message = errorPayload.details || errorPayload.error || message;
+        } catch {
+          // Keep the generic message when the server does not return JSON.
+        }
+        throw new Error(message);
+      }
       const result = await response.json();
       setData(result);
       const newItem: HistoryItem = {
@@ -164,7 +179,8 @@ export default function Home() {
       toast.success(`已更新 ${searchTicker.toUpperCase()} 的研究数据`);
     } catch (error) {
       console.error(error);
-      toast.error("更新股票数据时出错");
+      const message = error instanceof Error ? error.message : "未知错误";
+      toast.error("更新股票数据时出错", { description: message });
     } finally {
       setLoading(false);
     }
