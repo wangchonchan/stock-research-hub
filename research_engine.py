@@ -4,11 +4,13 @@ Stock Research Engine v3.2 - Robust Data Fetching & Comprehensive Capital Flow A
 """
 
 import json
+import os
 import sys
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List
+import requests
 import yfinance as yf
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -74,6 +76,26 @@ class StockResearchEngine:
                     "top_outflow": "N/A",
                     "risk_appetite": "N/A",
                 },
+                "institutional_flow": {
+                    "available": False,
+                    "source": "Yahoo Finance / yfinance institutional_holders",
+                    "latest_report_date": "N/A",
+                    "note": "Yahoo Finance 返回机构持仓后会在这里显示；可配置 ALPHA_VANTAGE_API_KEY 作为备用数据源。",
+                    "top_holders": [],
+                    "top_increases": [],
+                    "top_decreases": [],
+                },
+                "options_flow": {
+                    "available": False,
+                    "source": "Yahoo Finance options chain",
+                    "as_of": "N/A",
+                    "expirations_analyzed": [],
+                    "bullish_premium_proxy_usd": "N/A",
+                    "bearish_premium_proxy_usd": "N/A",
+                    "put_call_premium_ratio": "N/A",
+                    "unusual_contracts": [],
+                    "note": "Yahoo Finance 返回期权链后会筛选异常成交合约。",
+                },
             },
             "news": [],
             "checklists": [],
@@ -127,7 +149,7 @@ class StockResearchEngine:
             return "Positive"
         if score < 0:
             return "Negative"
-        return "Neutral"
+        return "中性"
 
     def _fetch_google_news(self):
         try:
@@ -214,23 +236,483 @@ class StockResearchEngine:
         except:
             return {}
 
+    def _to_float(self, value, default: float = 0) -> float:
+        if value is None or value == "N/A":
+            return default
+        try:
+            return float(str(value).replace(",", ""))
+        except Exception:
+            return default
+
+    def _first_value(self, record: Dict[str, Any], keys: List[str], default="N/A"):
+        for key in keys:
+            if key in record and record[key] not in (None, ""):
+                return record[key]
+        return default
+
+    def _normalize_institutional_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        holder = self._first_value(
+            record,
+            [
+                "Holder",
+                "holder",
+                "holderName",
+                "institution",
+                "institutionName",
+                "entityProperName",
+                "name",
+            ],
+        )
+        report_date = self._first_value(
+            record,
+            [
+                "Date Reported",
+                "date",
+                "reportDate",
+                "reportedDate",
+                "filingDate",
+                "periodOfReport",
+                "period",
+            ],
+        )
+        shares = self._to_float(
+            self._first_value(
+                record, ["Shares", "shares", "share", "sshPrnamt", "sharesHeld"]
+            )
+        )
+        value = self._to_float(
+            self._first_value(
+                record, ["Value", "value", "marketValue", "value_usd", "market_value"]
+            )
+        )
+        change = self._to_float(
+            self._first_value(
+                record,
+                ["change", "changeInShares", "sharesChange", "change_shares"],
+                None,
+            ),
+            None,
+        )
+        return {
+            "holder": str(holder),
+            "report_date": str(report_date),
+            "shares": shares,
+            "market_value_usd": value,
+            "change_shares": change,
+        }
+
+    def _empty_institutional_flow(
+        self, note: str, source: str = "Yahoo Finance"
+    ) -> Dict[str, Any]:
+        return {
+            "available": False,
+            "source": source,
+            "latest_report_date": "N/A",
+            "note": note,
+            "top_holders": [],
+            "top_increases": [],
+            "top_decreases": [],
+        }
+
+    def _records_from_holders_df(self, df) -> List[Dict[str, Any]]:
+        if df is None or getattr(df, "empty", True):
+            return []
+        records = df.reset_index(drop=True).to_dict("records")
+        normalized = []
+        for record in records:
+            clean = {}
+            for key, value in record.items():
+                if isinstance(value, (pd.Timestamp, datetime)):
+                    clean[str(key)] = value.strftime("%Y-%m-%d")
+                else:
+                    clean[str(key)] = value
+            item = self._normalize_institutional_record(clean)
+            if item["holder"] != "N/A":
+                normalized.append(item)
+        return normalized
+
+    def _build_institutional_payload(
+        self,
+        records: List[Dict[str, Any]],
+        source: str,
+        note: str,
+    ) -> Dict[str, Any]:
+        if not records:
+            return self._empty_institutional_flow(
+                "Yahoo Finance 未返回机构持仓记录。", source
+            )
+
+        latest_date = (
+            max(item["report_date"] for item in records if item["report_date"] != "N/A")
+            if any(item["report_date"] != "N/A" for item in records)
+            else "N/A"
+        )
+        latest_records = (
+            [item for item in records if item["report_date"] == latest_date]
+            if latest_date != "N/A"
+            else records
+        )
+        latest_records.sort(key=lambda item: item["market_value_usd"], reverse=True)
+
+        increases = []
+        decreases = []
+        for item in records:
+            if isinstance(item["change_shares"], (int, float)):
+                if item["change_shares"] > 0:
+                    increases.append(item)
+                elif item["change_shares"] < 0:
+                    decreases.append(item)
+        increases.sort(key=lambda item: item["change_shares"], reverse=True)
+        decreases.sort(key=lambda item: item["change_shares"])
+
+        return {
+            "available": True,
+            "source": source,
+            "latest_report_date": latest_date,
+            "note": note,
+            "top_holders": latest_records[:8],
+            "top_increases": increases[:5],
+            "top_decreases": decreases[:5],
+        }
+
+    def _fetch_yahoo_institutional_flow(self) -> Dict[str, Any]:
+        try:
+            response = requests.get(
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
+                params={
+                    "modules": "institutionOwnership",
+                    "formatted": "false",
+                    "corsDomain": "finance.yahoo.com",
+                },
+                timeout=8,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            result = payload.get("quoteSummary", {}).get("result") or []
+            ownership = result[0].get("institutionOwnership", {}) if result else {}
+            raw_records = ownership.get("ownershipList") or []
+            records = []
+            for item in raw_records:
+                if not isinstance(item, dict):
+                    continue
+                normalized = {
+                    "Holder": self._first_value(item, ["organization"]),
+                    "Date Reported": (
+                        datetime.fromtimestamp(item["reportDate"]).strftime("%Y-%m-%d")
+                        if item.get("reportDate")
+                        else "N/A"
+                    ),
+                    "Shares": self._first_value(item, ["position"]),
+                    "Value": self._first_value(item, ["value"]),
+                }
+                record = self._normalize_institutional_record(normalized)
+                if record["holder"] != "N/A":
+                    records.append(record)
+
+            if not records:
+                return self._empty_institutional_flow(
+                    "Yahoo Finance 未返回机构持仓记录。"
+                )
+            return self._build_institutional_payload(
+                records,
+                "Yahoo Finance quoteSummary institutionOwnership",
+                "真实 Yahoo Finance 机构持仓数据；通常来自 13F/机构披露，存在报告延迟，不代表实时逐笔资金流。",
+            )
+        except Exception as e:
+            self.data["diagnostics"].append(
+                f"yahoo_institutional_flow_unavailable: {e}"
+            )
+            return self._empty_institutional_flow(
+                f"Yahoo Finance 机构持仓请求失败：{e}"
+            )
+
+    def _fetch_alpha_vantage_institutional_flow(self) -> Dict[str, Any]:
+        api_key = os.getenv("ALPHA_VANTAGE_API_KEY") or os.getenv(
+            "ALPHAVANTAGE_API_KEY"
+        )
+        base = self._empty_institutional_flow(
+            "Yahoo Finance 未返回数据；可配置 ALPHA_VANTAGE_API_KEY 作为备用真实 13F 数据源。",
+            "Alpha Vantage INSTITUTIONAL_HOLDINGS",
+        )
+        if not api_key:
+            return base
+
+        try:
+            response = requests.get(
+                "https://www.alphavantage.co/query",
+                params={
+                    "function": "INSTITUTIONAL_HOLDINGS",
+                    "symbol": self.ticker,
+                    "apikey": api_key,
+                },
+                timeout=8,
+                headers={"User-Agent": "stock-research-hub/1.0"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if (
+                "Information" in payload
+                or "Note" in payload
+                or "Error Message" in payload
+            ):
+                base["note"] = (
+                    payload.get("Information")
+                    or payload.get("Note")
+                    or payload.get("Error Message")
+                )
+                return base
+
+            raw_records = None
+            for key in (
+                "data",
+                "holdings",
+                "institutionalHoldings",
+                "institutional_holders",
+            ):
+                if isinstance(payload.get(key), list):
+                    raw_records = payload[key]
+                    break
+            if raw_records is None and isinstance(payload, list):
+                raw_records = payload
+            if not raw_records:
+                base["note"] = "API 未返回机构持仓记录。"
+                return base
+
+            records = [
+                self._normalize_institutional_record(item)
+                for item in raw_records
+                if isinstance(item, dict)
+            ]
+            records = [item for item in records if item["holder"] != "N/A"]
+            if not records:
+                base["note"] = "API 返回格式中没有可识别的机构持仓字段。"
+                return base
+
+            return self._build_institutional_payload(
+                records,
+                "Alpha Vantage INSTITUTIONAL_HOLDINGS",
+                "真实 13F 机构持仓数据；通常按季度披露，存在报告延迟，不代表实时逐笔资金流。",
+            )
+        except Exception as e:
+            self.data["diagnostics"].append(
+                f"alpha_vantage_institutional_flow_unavailable: {e}"
+            )
+            base["note"] = f"Alpha Vantage 机构持仓 API 请求失败：{e}"
+            return base
+
+    def _fetch_institutional_flow(self) -> Dict[str, Any]:
+        yahoo_result = self._fetch_yahoo_institutional_flow()
+        if yahoo_result.get("available"):
+            return yahoo_result
+
+        fallback = self._fetch_alpha_vantage_institutional_flow()
+        if fallback.get("available"):
+            return fallback
+
+        return yahoo_result
+
+    def _empty_options_flow(self, note: str) -> Dict[str, Any]:
+        return {
+            "available": False,
+            "source": "Yahoo Finance options chain",
+            "as_of": "N/A",
+            "expirations_analyzed": [],
+            "bullish_premium_proxy_usd": "N/A",
+            "bearish_premium_proxy_usd": "N/A",
+            "put_call_premium_ratio": "N/A",
+            "unusual_contracts": [],
+            "note": note,
+        }
+
+    def _fetch_yahoo_options_payload(self, expiration: int = None) -> Dict[str, Any]:
+        params = {"formatted": "false"}
+        if expiration is not None:
+            params["date"] = expiration
+        response = requests.get(
+            f"https://query2.finance.yahoo.com/v7/finance/options/{self.ticker}",
+            params=params,
+            timeout=8,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _normalize_option_contract(
+        self, contract: Dict[str, Any], option_type: str, expiration_label: str
+    ) -> Dict[str, Any]:
+        volume = self._to_float(contract.get("volume"))
+        open_interest = self._to_float(contract.get("openInterest"))
+        last_price = self._to_float(contract.get("lastPrice"))
+        strike = self._to_float(contract.get("strike"))
+        premium = volume * last_price * 100 if volume and last_price else 0
+        volume_oi_ratio = (
+            round(volume / open_interest, 2)
+            if open_interest and open_interest > 0
+            else "N/A"
+        )
+        last_trade_timestamp = contract.get("lastTradeDate")
+        return {
+            "contract_symbol": contract.get("contractSymbol", "N/A"),
+            "type": option_type,
+            "expiration": expiration_label,
+            "strike": strike,
+            "last_price": last_price,
+            "volume": volume,
+            "open_interest": open_interest,
+            "volume_oi_ratio": volume_oi_ratio,
+            "premium_usd": round(premium, 2),
+            "implied_volatility": round(
+                self._to_float(contract.get("impliedVolatility")) * 100, 2
+            ),
+            "last_trade_date": (
+                datetime.fromtimestamp(last_trade_timestamp).strftime("%Y-%m-%d %H:%M")
+                if last_trade_timestamp
+                else "N/A"
+            ),
+        }
+
+    def _is_unusual_option(self, item: Dict[str, Any]) -> bool:
+        volume = item["volume"] if isinstance(item["volume"], (int, float)) else 0
+        open_interest = (
+            item["open_interest"]
+            if isinstance(item["open_interest"], (int, float))
+            else 0
+        )
+        ratio = (
+            item["volume_oi_ratio"]
+            if isinstance(item["volume_oi_ratio"], (int, float))
+            else 0
+        )
+        premium = (
+            item["premium_usd"] if isinstance(item["premium_usd"], (int, float)) else 0
+        )
+        return volume >= 500 and (
+            premium >= 250_000 or ratio >= 2 or (open_interest == 0 and volume >= 1000)
+        )
+
+    def _fetch_options_flow(self) -> Dict[str, Any]:
+        try:
+            first_payload = self._fetch_yahoo_options_payload()
+            result = first_payload.get("optionChain", {}).get("result") or []
+            if not result:
+                return self._empty_options_flow("Yahoo Finance 未返回期权链。")
+
+            chain_root = result[0]
+            expiration_dates = chain_root.get("expirationDates") or []
+            expirations_to_check = expiration_dates[:3]
+            if not expirations_to_check:
+                return self._empty_options_flow("Yahoo Finance 未返回可用期权到期日。")
+
+            unusual_contracts = []
+            expirations_analyzed = []
+            bullish_premium = 0
+            bearish_premium = 0
+
+            for expiration in expirations_to_check:
+                payload = (
+                    first_payload
+                    if expiration == expirations_to_check[0]
+                    else self._fetch_yahoo_options_payload(expiration)
+                )
+                option_result = payload.get("optionChain", {}).get("result") or []
+                if not option_result:
+                    continue
+                option_sets = option_result[0].get("options") or []
+                if not option_sets:
+                    continue
+
+                expiration_label = datetime.fromtimestamp(expiration).strftime(
+                    "%Y-%m-%d"
+                )
+                expirations_analyzed.append(expiration_label)
+                option_set = option_sets[0]
+                for option_type, contracts in (
+                    ("看涨", option_set.get("calls") or []),
+                    ("看跌", option_set.get("puts") or []),
+                ):
+                    for contract in contracts:
+                        if not isinstance(contract, dict):
+                            continue
+                        item = self._normalize_option_contract(
+                            contract, option_type, expiration_label
+                        )
+                        if option_type == "看涨":
+                            bullish_premium += (
+                                item["premium_usd"]
+                                if isinstance(item["premium_usd"], (int, float))
+                                else 0
+                            )
+                        else:
+                            bearish_premium += (
+                                item["premium_usd"]
+                                if isinstance(item["premium_usd"], (int, float))
+                                else 0
+                            )
+                        if self._is_unusual_option(item):
+                            unusual_contracts.append(item)
+
+            unusual_contracts.sort(
+                key=lambda item: (
+                    item["premium_usd"]
+                    if isinstance(item["premium_usd"], (int, float))
+                    else 0
+                ),
+                reverse=True,
+            )
+            if not unusual_contracts:
+                return {
+                    "available": True,
+                    "source": "Yahoo Finance options chain",
+                    "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
+                    "expirations_analyzed": expirations_analyzed,
+                    "bullish_premium_proxy_usd": round(bullish_premium, 2),
+                    "bearish_premium_proxy_usd": round(bearish_premium, 2),
+                    "put_call_premium_ratio": (
+                        round(bearish_premium / bullish_premium, 2)
+                        if bullish_premium
+                        else "N/A"
+                    ),
+                    "unusual_contracts": [],
+                    "note": "未发现符合当前阈值的异常期权大单。",
+                }
+
+            return {
+                "available": True,
+                "source": "Yahoo Finance options chain",
+                "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
+                "expirations_analyzed": expirations_analyzed,
+                "bullish_premium_proxy_usd": round(bullish_premium, 2),
+                "bearish_premium_proxy_usd": round(bearish_premium, 2),
+                "put_call_premium_ratio": (
+                    round(bearish_premium / bullish_premium, 2)
+                    if bullish_premium
+                    else "N/A"
+                ),
+                "unusual_contracts": unusual_contracts[:8],
+                "note": "基于 Yahoo Finance 期权链的成交量、未平仓量和权利金筛选；不包含买卖方向或机构身份。",
+            }
+        except Exception as e:
+            self.data["diagnostics"].append(f"options_flow_unavailable: {e}")
+            return self._empty_options_flow(f"Yahoo Finance 期权链请求失败：{e}")
+
     def _flow_intensity(self, change_pct: float, volume_ratio: float) -> str:
         if change_pct > 0 and volume_ratio >= 1.2:
-            return "强流入/强成交 (Strong Inflow)"
+            return "强流入/强成交"
         if change_pct > 0:
-            return "温和流入 (Moderate Inflow)"
+            return "温和流入"
         if change_pct < 0 and volume_ratio >= 1.2:
-            return "强流出/放量下跌 (Strong Outflow)"
+            return "强流出/放量下跌"
         if change_pct < 0:
-            return "温和流出 (Moderate Outflow)"
-        return "中性 (Neutral)"
+            return "温和流出"
+        return "中性"
 
     def _flow_direction(self, change_pct: float) -> str:
         if change_pct > 0:
-            return "Inflow"
+            return "流入"
         if change_pct < 0:
-            return "Outflow"
-        return "Neutral"
+            return "流出"
+        return "中性"
 
     def _build_flow_detail(
         self, symbol: str, label: str, category: str, hist
@@ -240,7 +722,7 @@ class StockResearchEngine:
                 "symbol": symbol,
                 "label": label,
                 "category": category,
-                "direction": "Neutral",
+                "direction": "中性",
                 "intensity": "N/A",
                 "change_percent": "N/A",
                 "volume_ratio": "N/A",
@@ -255,7 +737,7 @@ class StockResearchEngine:
                 "symbol": symbol,
                 "label": label,
                 "category": category,
-                "direction": "Neutral",
+                "direction": "中性",
                 "intensity": "N/A",
                 "change_percent": "N/A",
                 "volume_ratio": "N/A",
@@ -279,8 +761,8 @@ class StockResearchEngine:
         direction = self._flow_direction(change_pct)
         signed_flow = (
             dollar_volume
-            if direction == "Inflow"
-            else -dollar_volume if direction == "Outflow" else 0
+            if direction == "流入"
+            else -dollar_volume if direction == "流出" else 0
         )
 
         return {
@@ -404,9 +886,9 @@ class StockResearchEngine:
                 and isinstance(iwm["change_percent"], (int, float))
             ):
                 if qqq["change_percent"] > 0 and iwm["change_percent"] > 0:
-                    risk_appetite = "Risk-on：成长与小盘同步吸金"
+                    risk_appetite = "风险偏好增强：成长与小盘同步走强"
                 elif qqq["change_percent"] < 0 and iwm["change_percent"] < 0:
-                    risk_appetite = "Risk-off：成长与小盘同步承压"
+                    risk_appetite = "风险偏好下降：成长与小盘同步承压"
                 elif qqq["change_percent"] > iwm["change_percent"]:
                     risk_appetite = "偏成长/科技，资金更集中在 Nasdaq"
                 else:
@@ -543,11 +1025,11 @@ class StockResearchEngine:
                     intensity = "N/A"
                     if ratio is not None:
                         if ratio >= 1.5:
-                            intensity = "强流入/强成交 (Strong Inflow)"
+                            intensity = "强流入/强成交"
                         elif ratio >= 1.0:
-                            intensity = "中性偏强 (Moderate Inflow)"
+                            intensity = "中性偏强"
                         else:
-                            intensity = "偏弱 (Weak/Outflow)"
+                            intensity = "偏弱"
 
                     net_flow_proxy = (
                         (float(volume) * current_price)
@@ -571,10 +1053,18 @@ class StockResearchEngine:
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
 
-            # 3. News
+            # 3. Real institutional holders (Yahoo Finance first, Alpha Vantage fallback)
+            self.data["capital_flow"][
+                "institutional_flow"
+            ] = self._fetch_institutional_flow()
+
+            # 4. Unusual options activity (Yahoo Finance options chain)
+            self.data["capital_flow"]["options_flow"] = self._fetch_options_flow()
+
+            # 5. News
             self._fetch_google_news()
 
-            # 4. Fundamentals
+            # 6. Fundamentals
             try:
                 q_fin = t.quarterly_financials
                 if not q_fin.empty:
@@ -647,7 +1137,7 @@ class StockResearchEngine:
             except Exception as e:
                 self.data["diagnostics"].append(f"fundamentals_unavailable: {e}")
 
-            # 5. Smart Checklists
+            # 7. Smart Checklists
             rsi = self.data["technicals"]["rsi"]
             pb = self.data["price"]["pb_ratio"]
             rev_yoy = self.data["fundamentals"]["revenue_yoy"]
@@ -655,55 +1145,55 @@ class StockResearchEngine:
             checklists = []
             checklists.append(
                 {
-                    "name": "Technical RSI Monitor",
+                    "name": "技术 RSI 监控",
                     "value": f"RSI: {rsi}",
                     "status": (
-                        "OVERSOLD"
+                        "超卖"
                         if isinstance(rsi, (int, float)) and rsi <= 35
                         else (
-                            "OVERBOUGHT"
+                            "超买"
                             if isinstance(rsi, (int, float)) and rsi >= 65
-                            else "NORMAL"
+                            else "正常"
                         )
                     ),
                     "triggered": isinstance(rsi, (int, float))
                     and (rsi <= 35 or rsi >= 65),
-                    "description": "RSI below 35 suggests oversold (potential buy), above 65 suggests overbought (potential risk).",
+                    "description": "RSI 低于 35 通常代表超卖，高于 65 通常代表超买风险。",
                 }
             )
             checklists.append(
                 {
-                    "name": "Valuation (PB) Monitor",
+                    "name": "估值（PB）监控",
                     "value": f"PB: {pb}",
                     "status": (
-                        "UNDERVALUED"
+                        "低估"
                         if (isinstance(pb, (int, float)) and 0 < pb <= 1.5)
-                        else "NORMAL"
+                        else "正常"
                     ),
                     "triggered": isinstance(pb, (int, float)) and 0 < pb <= 1.5,
-                    "description": "PB ratio below 1.5 often indicates the stock is trading near or below its book value.",
+                    "description": "PB 低于 1.5 通常表示股价接近或低于账面价值。",
                 }
             )
             checklists.append(
                 {
-                    "name": "Revenue Growth Monitor",
+                    "name": "营收增长监控",
                     "value": (
                         f"YoY: {rev_yoy}%"
                         if isinstance(rev_yoy, (int, float))
                         else "N/A"
                     ),
                     "status": (
-                        "HIGH GROWTH"
+                        "高增长"
                         if (isinstance(rev_yoy, (int, float)) and rev_yoy > 20)
                         else (
-                            "STAGNANT"
+                            "增长停滞"
                             if (isinstance(rev_yoy, (int, float)) and rev_yoy < 0)
-                            else "NORMAL"
+                            else "正常"
                         )
                     ),
                     "triggered": isinstance(rev_yoy, (int, float))
                     and (rev_yoy > 20 or rev_yoy < 0),
-                    "description": "Revenue growth > 20% is a strong positive signal; negative growth is a warning.",
+                    "description": "营收增长高于 20% 是较强的正面信号；负增长则需要警惕。",
                 }
             )
             self.data["checklists"] = checklists

@@ -62,7 +62,7 @@ interface FlowDetail {
   symbol: string;
   label: string;
   category: string;
-  direction: "Inflow" | "Outflow" | "Neutral" | string;
+  direction: "流入" | "流出" | "中性" | string;
   intensity: string;
   change_percent: number | string;
   volume_ratio: number | string;
@@ -74,6 +74,50 @@ interface FlowDestinationSummary {
   top_inflow: string;
   top_outflow: string;
   risk_appetite: string;
+}
+
+interface InstitutionalHolding {
+  holder: string;
+  report_date: string;
+  shares: number | string;
+  market_value_usd: number | string;
+  change_shares: number | string | null;
+}
+
+interface InstitutionalFlow {
+  available: boolean;
+  source: string;
+  latest_report_date: string;
+  note: string;
+  top_holders: InstitutionalHolding[];
+  top_increases: InstitutionalHolding[];
+  top_decreases: InstitutionalHolding[];
+}
+
+interface UnusualOptionContract {
+  contract_symbol: string;
+  type: "看涨" | "看跌" | string;
+  expiration: string;
+  strike: number | string;
+  last_price: number | string;
+  volume: number | string;
+  open_interest: number | string;
+  volume_oi_ratio: number | string;
+  premium_usd: number | string;
+  implied_volatility: number | string;
+  last_trade_date: string;
+}
+
+interface OptionsFlow {
+  available: boolean;
+  source: string;
+  as_of: string;
+  expirations_analyzed: string[];
+  bullish_premium_proxy_usd: number | string;
+  bearish_premium_proxy_usd: number | string;
+  put_call_premium_ratio: number | string;
+  unusual_contracts: UnusualOptionContract[];
+  note: string;
 }
 
 interface CapitalFlow {
@@ -92,6 +136,8 @@ interface CapitalFlow {
   market_flow_details?: FlowDetail[];
   sector_flow_details?: FlowDetail[];
   flow_destination_summary?: FlowDestinationSummary;
+  institutional_flow?: InstitutionalFlow;
+  options_flow?: OptionsFlow;
 }
 
 interface StockData {
@@ -228,28 +274,28 @@ export default function Home() {
   };
 
   const getFlowColor = (intensity: string) => {
-    if (intensity.includes("Inflow") || intensity.includes("流入"))
+    if (intensity.includes("流入"))
       return "text-emerald-600 bg-emerald-50 border-emerald-100";
-    if (
-      intensity.includes("Outflow") ||
-      intensity.includes("流出") ||
-      intensity.includes("下跌")
-    )
+    if (intensity.includes("流出") || intensity.includes("下跌"))
       return "text-rose-600 bg-rose-50 border-rose-100";
     return "text-slate-600 bg-slate-50 border-slate-100";
   };
 
   const getDirectionColor = (direction: string) => {
-    if (direction === "Inflow")
+    if (direction === "流入")
       return "text-emerald-600 bg-emerald-50 border-emerald-100";
-    if (direction === "Outflow")
-      return "text-rose-600 bg-rose-50 border-rose-100";
+    if (direction === "流出") return "text-rose-600 bg-rose-50 border-rose-100";
     return "text-slate-600 bg-slate-50 border-slate-100";
   };
 
   const formatPercent = (value: number | string) => {
     if (typeof value !== "number" || isNaN(value)) return value;
     return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+  };
+
+  const formatShares = (value: number | string | null) => {
+    if (typeof value !== "number" || isNaN(value)) return value ?? "N/A";
+    return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
   };
 
   return (
@@ -609,12 +655,8 @@ export default function Home() {
                       <div>
                         <CardTitle className="text-lg font-bold flex items-center gap-2">
                           <Wallet className="text-blue-300" />
-                          资金流向拆解 (Capital Flow Map)
+                          市场资金活跃度拆解
                         </CardTitle>
-                        <p className="text-xs text-slate-400 mt-2 max-w-3xl leading-relaxed">
-                          使用成交额 × 涨跌方向估算资金活跃与去向；这是
-                          ETF/个股层面的 proxy，不是逐笔真实净流入。
-                        </p>
                       </div>
                       <Badge
                         variant="outline"
@@ -651,7 +693,7 @@ export default function Home() {
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-white p-4">
                         <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                          预估成交额 Proxy
+                          预估成交额
                         </p>
                         <p className="text-xl font-black text-slate-900">
                           {formatLargeNumber(
@@ -659,46 +701,256 @@ export default function Home() {
                           )}
                         </p>
                         <p className="text-xs text-slate-500 mt-2">
-                          成交量 × 股价，不等于真实净流入
+                          成交量 × 股价
                         </p>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
-                        <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">
-                          资金最可能流入
-                        </p>
-                        <p className="font-bold text-emerald-900">
-                          {data.capital_flow.flow_destination_summary
-                            ?.top_inflow ?? "N/A"}
-                        </p>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                        <div>
+                          <h4 className="font-bold text-slate-900">
+                            真实机构持仓（13F）
+                          </h4>
+                          <p className="text-xs text-slate-500 mt-1">
+                            数据源：
+                            {data.capital_flow.institutional_flow?.source ??
+                              "N/A"}
+                            ；最新报告期：
+                            {data.capital_flow.institutional_flow
+                              ?.latest_report_date ?? "N/A"}
+                          </p>
+                        </div>
+                        <Badge
+                          className={
+                            data.capital_flow.institutional_flow?.available
+                              ? "bg-emerald-500 text-white"
+                              : "bg-slate-400 text-white"
+                          }
+                        >
+                          {data.capital_flow.institutional_flow?.available
+                            ? "已连接真实 API"
+                            : "等待 Yahoo 数据"}
+                        </Badge>
                       </div>
-                      <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-4">
-                        <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-1">
-                          资金最可能流出
-                        </p>
-                        <p className="font-bold text-rose-900">
-                          {data.capital_flow.flow_destination_summary
-                            ?.top_outflow ?? "N/A"}
-                        </p>
+                      <p className="text-xs text-slate-500 mb-4">
+                        {data.capital_flow.institutional_flow?.note ??
+                          "Yahoo Finance 暂未返回机构持仓数据。"}
+                      </p>
+
+                      {data.capital_flow.institutional_flow?.available ? (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                              主要机构持仓
+                            </p>
+                            <div className="space-y-2">
+                              {(
+                                data.capital_flow.institutional_flow
+                                  .top_holders ?? []
+                              )
+                                .slice(0, 5)
+                                .map((item, idx) => (
+                                  <div
+                                    key={`${item.holder}-${idx}`}
+                                    className="rounded-lg border border-slate-100 bg-slate-50 p-3"
+                                  >
+                                    <p className="font-bold text-slate-900 text-sm line-clamp-1">
+                                      {item.holder}
+                                    </p>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                      {formatShares(item.shares)} 股 ·{" "}
+                                      {formatLargeNumber(item.market_value_usd)}
+                                    </p>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2">
+                              增持最多
+                            </p>
+                            <div className="space-y-2">
+                              {(
+                                data.capital_flow.institutional_flow
+                                  .top_increases ?? []
+                              )
+                                .slice(0, 5)
+                                .map((item, idx) => (
+                                  <div
+                                    key={`${item.holder}-inc-${idx}`}
+                                    className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3"
+                                  >
+                                    <p className="font-bold text-emerald-900 text-sm line-clamp-1">
+                                      {item.holder}
+                                    </p>
+                                    <p className="text-xs text-emerald-700 mt-1">
+                                      +{formatShares(item.change_shares)} 股
+                                    </p>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2">
+                              减持最多
+                            </p>
+                            <div className="space-y-2">
+                              {(
+                                data.capital_flow.institutional_flow
+                                  .top_decreases ?? []
+                              )
+                                .slice(0, 5)
+                                .map((item, idx) => (
+                                  <div
+                                    key={`${item.holder}-dec-${idx}`}
+                                    className="rounded-lg border border-rose-100 bg-rose-50/60 p-3"
+                                  >
+                                    <p className="font-bold text-rose-900 text-sm line-clamp-1">
+                                      {item.holder}
+                                    </p>
+                                    <p className="text-xs text-rose-700 mt-1">
+                                      {formatShares(item.change_shares)} 股
+                                    </p>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                          Yahoo Finance 暂未返回机构持仓数据；如果需要备用真实
+                          13F 数据源，可以在部署环境变量里配置{" "}
+                          <code className="font-mono text-xs bg-white px-1 py-0.5 rounded">
+                            ALPHA_VANTAGE_API_KEY
+                          </code>
+                          。
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                        <div>
+                          <h4 className="font-bold text-slate-900">
+                            异常期权大单
+                          </h4>
+                          <p className="text-xs text-slate-500 mt-1">
+                            数据源：
+                            {data.capital_flow.options_flow?.source ?? "N/A"}
+                            ；更新时间：
+                            {data.capital_flow.options_flow?.as_of ?? "N/A"}
+                          </p>
+                        </div>
+                        <Badge
+                          className={
+                            data.capital_flow.options_flow?.available
+                              ? "bg-blue-600 text-white"
+                              : "bg-slate-400 text-white"
+                          }
+                        >
+                          {data.capital_flow.options_flow?.available
+                            ? "已连接 Yahoo 期权链"
+                            : "等待 Yahoo 期权链"}
+                        </Badge>
                       </div>
-                      <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
-                        <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">
-                          风险偏好
-                        </p>
-                        <p className="font-bold text-blue-900">
-                          {data.capital_flow.flow_destination_summary
-                            ?.risk_appetite ?? "N/A"}
-                        </p>
+                      <p className="text-xs text-slate-500 mb-4">
+                        {data.capital_flow.options_flow?.note ??
+                          "Yahoo Finance 暂未返回期权链数据。"}
+                      </p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+                          <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-1">
+                            看涨权利金
+                          </p>
+                          <p className="text-xl font-black text-emerald-900">
+                            {formatLargeNumber(
+                              data.capital_flow.options_flow
+                                ?.bullish_premium_proxy_usd ?? "N/A"
+                            )}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-4">
+                          <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-1">
+                            看跌权利金
+                          </p>
+                          <p className="text-xl font-black text-rose-900">
+                            {formatLargeNumber(
+                              data.capital_flow.options_flow
+                                ?.bearish_premium_proxy_usd ?? "N/A"
+                            )}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                          <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">
+                            Put/Call 权利金比
+                          </p>
+                          <p className="text-xl font-black text-blue-900">
+                            {data.capital_flow.options_flow
+                              ?.put_call_premium_ratio ?? "N/A"}
+                          </p>
+                        </div>
                       </div>
+
+                      {(data.capital_flow.options_flow?.unusual_contracts ?? [])
+                        .length > 0 ? (
+                        <div className="space-y-3">
+                          {(
+                            data.capital_flow.options_flow?.unusual_contracts ??
+                            []
+                          ).map(item => (
+                            <div
+                              key={item.contract_symbol}
+                              className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                            >
+                              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-3">
+                                <div>
+                                  <p className="font-black text-slate-900">
+                                    {item.contract_symbol}
+                                  </p>
+                                  <p className="text-xs text-slate-500">
+                                    {item.expiration} · {item.type} · 行权价 $
+                                    {item.strike}
+                                  </p>
+                                </div>
+                                <Badge
+                                  className={
+                                    item.type === "看涨"
+                                      ? "bg-emerald-500 text-white"
+                                      : "bg-rose-500 text-white"
+                                  }
+                                >
+                                  {item.type}
+                                </Badge>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs font-semibold text-slate-600">
+                                <span>成交量 {formatShares(item.volume)}</span>
+                                <span>
+                                  未平仓 {formatShares(item.open_interest)}
+                                </span>
+                                <span>量/OI {item.volume_oi_ratio}</span>
+                                <span>
+                                  权利金 {formatLargeNumber(item.premium_usd)}
+                                </span>
+                                <span>IV {item.implied_volatility}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                          当前没有筛选出异常期权合约，或 Yahoo Finance
+                          暂未返回期权链数据。
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                       <div>
                         <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2">
                           <Globe size={16} className="text-blue-600" />
-                          大盘资金流向 Proxy
+                          大盘成交活跃度
                         </h4>
                         <div className="space-y-3">
                           {(data.capital_flow.market_flow_details ?? []).map(
@@ -728,7 +980,7 @@ export default function Home() {
                                   <span>
                                     {formatPercent(item.change_percent)}
                                   </span>
-                                  <span>{item.volume_ratio}x vol</span>
+                                  <span>{item.volume_ratio}x 成交量</span>
                                   <span>
                                     {formatLargeNumber(
                                       item.signed_flow_proxy_usd
@@ -744,7 +996,7 @@ export default function Home() {
                       <div>
                         <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2">
                           <Activity size={16} className="text-emerald-600" />
-                          板块资金去向 Proxy
+                          板块成交活跃度
                         </h4>
                         <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1">
                           {(data.capital_flow.sector_flow_details ?? []).map(
@@ -772,7 +1024,7 @@ export default function Home() {
                                   <span>
                                     {formatPercent(item.change_percent)}
                                   </span>
-                                  <span>{item.volume_ratio}x vol</span>
+                                  <span>{item.volume_ratio}x 成交量</span>
                                   <span>
                                     {formatLargeNumber(
                                       item.signed_flow_proxy_usd
