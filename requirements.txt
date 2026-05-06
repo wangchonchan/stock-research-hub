@@ -1,4 +1,6 @@
-yfinance>=0.2.32
+# Keep yfinance on the stable 0.x API line; newer major versions have changed
+# fetch behavior and can break the stock research pipeline during fresh deploys.
+yfinance>=0.2.66,<1.0.0
 requests>=2.31.0
 flask
 pandas
