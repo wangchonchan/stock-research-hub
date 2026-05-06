@@ -1,23 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { 
   Loader2, Search, TrendingUp, BarChart3, 
+  Activity, Clock, CheckCircle2, AlertCircle, 
+  Info, Newspaper, ExternalLink, Download,
+  TrendingDown, Minus
   Activity, Clock, X, CheckCircle2, AlertCircle, 
   Info, Newspaper, ExternalLink, TrendingDown, Minus,
   ArrowLeftRight
 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import {
   ResponsiveContainer,
   BarChart,
@@ -26,6 +21,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   LineChart,
   Line
 } from "recharts";
@@ -99,15 +95,14 @@ interface HistoryItem {
   data: StockData;
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history_v9";
+const HISTORY_STORAGE_KEY = "stock_research_history_v8";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<StockData | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
-  const [isCompareOpen, setIsCompareOpen] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -161,34 +156,34 @@ export default function Home() {
     }
   };
 
-  const deleteHistoryItem = (id: string) => {
-    setHistory(history.filter(item => item.id !== id));
-    setSelectedForCompare(selectedForCompare.filter(sid => sid !== id));
-  };
-
-  const toggleSelectForCompare = (id: string) => {
-    if (selectedForCompare.includes(id)) {
-      setSelectedForCompare(selectedForCompare.filter(sid => sid !== id));
-    } else {
-      if (selectedForCompare.length >= 2) {
-        toast.warning("You can only compare 2 items at a time.");
-        return;
-      }
-      setSelectedForCompare([...selectedForCompare, id]);
-    }
-  };
-
-  const getCompareItems = () => {
-    return history.filter(item => selectedForCompare.includes(item.id));
+  const exportReport = () => {
+    window.print();
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8 print:p-0 print:bg-white">
+      <div className="max-w-6xl mx-auto" ref={reportRef}>
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+        <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 print:hidden">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
+            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.0</h1>
+          </div>
+          <div className="flex gap-2 w-full md:w-auto">
+            <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex flex-1 gap-2">
+              <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
+              <Button type="submit" disabled={loading}>
+                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+                Update
+              </Button>
+            </form>
+            {data && (
+              <Button variant="outline" onClick={exportReport}>
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </Button>
+            )}
+          </div>
             <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.1</h1>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex w-full md:w-auto gap-2">
@@ -457,12 +452,14 @@ export default function Home() {
             )}
           </div>
 
-          {/* Sidebar - History & Compare (RESTORED) */}
-          <div className="space-y-6">
-            <Card className="shadow-sm border-slate-200">
-              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+          {/* Sidebar - History */}
+          <div className="print:hidden">
+            <Card className="sticky top-8 shadow-sm border-slate-200">
+              <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                   <Clock size={16} />
+                  Recent Research
+                </CardTitle>
                   History
                 </CardTitle>
                 {selectedForCompare.length === 2 && (
@@ -518,32 +515,19 @@ export default function Home() {
                     <p className="text-xs text-slate-400 text-center py-4">No history yet</p>
                   )}
                   {history.map((item) => (
-                    <div
+                    <button
                       key={item.id}
-                      className={`group relative flex items-center gap-2 p-2 rounded-lg transition-all hover:bg-slate-50 ${data?.ticker === item.ticker ? 'bg-blue-50/50' : ''}`}
+                      onClick={() => setData(item.data)}
+                      className={`w-full text-left p-3 rounded-lg transition-all hover:bg-slate-50 group flex justify-between items-center ${data?.ticker === item.ticker ? 'bg-blue-50 border-l-4 border-blue-600' : ''}`}
                     >
-                      <Checkbox 
-                        checked={selectedForCompare.includes(item.id)}
-                        onCheckedChange={() => toggleSelectForCompare(item.id)}
-                        className="h-4 w-4"
-                      />
-                      <button
-                        onClick={() => setData(item.data)}
-                        className="flex-1 text-left"
-                      >
-                        <div className="font-bold text-slate-900 text-sm">{item.ticker}</div>
+                      <div>
+                        <div className="font-bold text-slate-900">{item.ticker}</div>
                         <div className="text-[10px] text-slate-400">{item.timestamp}</div>
-                      </button>
-                      <div className="text-right mr-6">
-                        <div className="font-bold text-slate-700 text-xs">${item.price.toFixed(2)}</div>
                       </div>
-                      <button 
-                        onClick={() => deleteHistoryItem(item.id)}
-                        className="absolute right-2 opacity-0 group-hover:opacity-100 p-1 hover:text-rose-500 transition-all"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
+                      <div className="text-right">
+                        <div className="font-bold text-slate-700">${item.price.toFixed(2)}</div>
+                      </div>
+                    </button>
                   ))}
                 </div>
               </CardContent>
@@ -553,6 +537,8 @@ export default function Home() {
       </div>
       
       {/* Footer */}
+      <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs print:hidden">
+        <p>© 2026 Stock Research Hub v3.0 • Data provided by Yahoo Finance & Google News</p>
       <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs">
         <p>© 2026 Stock Research Hub v3.1 • Data provided by Yahoo Finance & Google News</p>
       </footer>
