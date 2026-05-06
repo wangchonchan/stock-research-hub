@@ -13,12 +13,16 @@ import yfinance as yf
 import urllib.request
 import xml.etree.ElementTree as ET
 import re
+import logging
 
 class StockResearchEngine:
     def __init__(self, ticker: str = "AAPL"):
         self.ticker = ticker.upper()
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
         self.hkt = timezone(timedelta(hours=8))
         self.data = {
+            "diagnostics": [],
+            "data_source_status": "ok",
             "ticker": self.ticker,
             "company_name": "N/A",
             "description": "N/A",
@@ -184,6 +188,14 @@ class StockResearchEngine:
                     hist = t.history(period="1mo")
             except Exception:
                 hist = pd.DataFrame()
+            except Exception as e:
+                err = str(e)
+                if "CONNECT tunnel failed" in err or "curl: (56)" in err:
+                    self.data["diagnostics"].append("price_history_unavailable: network/proxy blocked upstream market data")
+                    self.data["data_source_status"] = "degraded"
+                else:
+                    self.data["diagnostics"].append(f"price_history_unavailable: {err}")
+                    self.data["data_source_status"] = "degraded"
             
             current_price = 0
             if not hist.empty:
@@ -296,6 +308,8 @@ class StockResearchEngine:
         except Exception as e:
             if not self.data.get("checklists"):
                 self.data["checklists"] = self._build_checklists()
+            self.data["diagnostics"].append(f"research_error: {e}")
+            self.data["data_source_status"] = "degraded"
             print(f"Error in research: {e}", file=sys.stderr)
             return self.data
 
