@@ -14,6 +14,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import re
 
+
 class StockResearchEngine:
     def __init__(self, ticker: str = "AAPL"):
         self.ticker = ticker.upper()
@@ -24,8 +25,18 @@ class StockResearchEngine:
             "description": "N/A",
             "timestamp": datetime.now(self.hkt).isoformat(),
             "updated_at": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
-            "price": {"current_price": 0, "change": 0, "change_percent": 0, "pb_ratio": "N/A", "pe_ratio": "N/A"},
-            "consensus": {"recommendation": "N/A", "target_price": "N/A", "upside_potential": "N/A"},
+            "price": {
+                "current_price": 0,
+                "change": 0,
+                "change_percent": 0,
+                "pb_ratio": "N/A",
+                "pe_ratio": "N/A",
+            },
+            "consensus": {
+                "recommendation": "N/A",
+                "target_price": "N/A",
+                "upside_potential": "N/A",
+            },
             "fundamentals": {
                 "quarter": "N/A",
                 "revenue": "N/A",
@@ -33,7 +44,7 @@ class StockResearchEngine:
                 "gross_margin": "N/A",
                 "net_margin": "N/A",
                 "cash_reserves": "N/A",
-                "historical_trends": []
+                "historical_trends": [],
             },
             "technicals": {
                 "rsi": "N/A",
@@ -41,7 +52,7 @@ class StockResearchEngine:
                 "ma_60": "N/A",
                 "osc_20": "N/A",
                 "bias_24": "N/A",
-                "cci_14": "N/A"
+                "cci_14": "N/A",
             },
             "capital_flow": {
                 "market_bucket": "N/A",
@@ -54,12 +65,19 @@ class StockResearchEngine:
                 "market_wide_flow": {
                     "mega_cap": "Neutral",
                     "large_cap": "Neutral",
-                    "small_cap": "Neutral"
-                }
+                    "small_cap": "Neutral",
+                },
+                "market_flow_details": [],
+                "sector_flow_details": [],
+                "flow_destination_summary": {
+                    "top_inflow": "N/A",
+                    "top_outflow": "N/A",
+                    "risk_appetite": "N/A",
+                },
             },
             "news": [],
             "checklists": [],
-            "diagnostics": []
+            "diagnostics": [],
         }
 
     def _summarize_description(self, text: str, max_words: int = 30) -> str:
@@ -71,49 +89,94 @@ class StockResearchEngine:
         return " ".join(words[:max_words]) + "..."
 
     def _get_sentiment(self, title: str) -> str:
-        positive_words = ['buy', 'growth', 'up', 'surge', 'beat', 'positive', 'bullish', 'gain', 'profit', 'strong']
-        negative_words = ['sell', 'drop', 'down', 'fall', 'miss', 'negative', 'bearish', 'loss', 'weak', 'risk']
-        
+        positive_words = [
+            "buy",
+            "growth",
+            "up",
+            "surge",
+            "beat",
+            "positive",
+            "bullish",
+            "gain",
+            "profit",
+            "strong",
+        ]
+        negative_words = [
+            "sell",
+            "drop",
+            "down",
+            "fall",
+            "miss",
+            "negative",
+            "bearish",
+            "loss",
+            "weak",
+            "risk",
+        ]
+
         title_lower = title.lower()
         score = 0
         for word in positive_words:
-            if word in title_lower: score += 1
+            if word in title_lower:
+                score += 1
         for word in negative_words:
-            if word in title_lower: score -= 1
-            
-        if score > 0: return "Positive"
-        if score < 0: return "Negative"
+            if word in title_lower:
+                score -= 1
+
+        if score > 0:
+            return "Positive"
+        if score < 0:
+            return "Negative"
         return "Neutral"
 
     def _fetch_google_news(self):
         try:
             url = f"https://news.google.com/rss/search?q={self.ticker}+stock&hl=en-US&gl=US&ceid=US:en"
-            headers = {'User-Agent': 'Mozilla/5.0'}
+            headers = {"User-Agent": "Mozilla/5.0"}
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=5) as response:
                 xml_data = response.read()
                 root = ET.fromstring(xml_data)
-                
+
                 seen_titles = set()
                 count = 0
-                for item in root.findall('.//item'):
-                    if count >= 4: break
-                    title = item.find('title').text if item.find('title') is not None else "N/A"
-                    link = item.find('link').text if item.find('link') is not None else "N/A"
-                    pub_date = item.find('pubDate').text if item.find('pubDate') is not None else "N/A"
-                    source = item.find('source').text if item.find('source') is not None else "N/A"
-                    
+                for item in root.findall(".//item"):
+                    if count >= 4:
+                        break
+                    title = (
+                        item.find("title").text
+                        if item.find("title") is not None
+                        else "N/A"
+                    )
+                    link = (
+                        item.find("link").text
+                        if item.find("link") is not None
+                        else "N/A"
+                    )
+                    pub_date = (
+                        item.find("pubDate").text
+                        if item.find("pubDate") is not None
+                        else "N/A"
+                    )
+                    source = (
+                        item.find("source").text
+                        if item.find("source") is not None
+                        else "N/A"
+                    )
+
                     if " - " in title:
                         title = title.rsplit(" - ", 1)[0]
-                    
+
                     if title != "N/A" and title not in seen_titles:
-                        self.data["news"].append({
-                            "title": title,
-                            "publisher": source,
-                            "link": link,
-                            "provider_publish_time": pub_date,
-                            "sentiment": self._get_sentiment(title)
-                        })
+                        self.data["news"].append(
+                            {
+                                "title": title,
+                                "publisher": source,
+                                "link": link,
+                                "provider_publish_time": pub_date,
+                                "sentiment": self._get_sentiment(title),
+                            }
+                        )
                         seen_titles.add(title)
                         count += 1
         except Exception:
@@ -121,15 +184,16 @@ class StockResearchEngine:
 
     def _calculate_indicators(self, df):
         try:
-            if len(df) < 60: return {}
-            close = df['Close']
+            if len(df) < 60:
+                return {}
+            close = df["Close"]
             ma5 = close.rolling(window=5).mean().iloc[-1]
             ma60 = close.rolling(window=60).mean().iloc[-1]
             ma20 = close.rolling(window=20).mean()
             osc20 = (close - ma20).iloc[-1]
             ma24 = close.rolling(window=24).mean()
             bias24 = ((close - ma24) / ma24 * 100).iloc[-1]
-            tp = (df['High'] + df['Low'] + df['Close']) / 3
+            tp = (df["High"] + df["Low"] + df["Close"]) / 3
             ma_tp = tp.rolling(window=14).mean()
             md_tp = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean())
             cci14 = ((tp - ma_tp) / (0.015 * md_tp)).iloc[-1]
@@ -145,40 +209,244 @@ class StockResearchEngine:
                 "osc_20": round(float(osc20), 2),
                 "bias_24": round(float(bias24), 2),
                 "cci_14": round(float(cci14), 2),
-                "rsi": round(float(rsi_val), 2) if not pd.isna(rsi_val) else "N/A"
+                "rsi": round(float(rsi_val), 2) if not pd.isna(rsi_val) else "N/A",
             }
         except:
             return {}
 
-    def _get_market_wide_flow(self):
-        # Proxy for market-wide flow using major ETFs
-        # SPY (Large/Mega), IWM (Small)
-        flows = {"mega_cap": "Neutral", "large_cap": "Neutral", "small_cap": "Neutral"}
-        try:
-            spy = yf.Ticker("SPY")
-            iwm = yf.Ticker("IWM")
-            
-            def get_intensity(ticker_obj):
-                h = ticker_obj.history(period="5d")
-                if len(h) < 2: return "Neutral"
-                vol = h['Volume'].iloc[-1]
-                avg_vol = h['Volume'].mean()
-                change = (h['Close'].iloc[-1] - h['Close'].iloc[-2]) / h['Close'].iloc[-2]
-                if vol > avg_vol * 1.2:
-                    return "Strong Inflow" if change > 0 else "Strong Outflow"
-                return "Moderate Inflow" if change > 0 else "Moderate Outflow"
+    def _flow_intensity(self, change_pct: float, volume_ratio: float) -> str:
+        if change_pct > 0 and volume_ratio >= 1.2:
+            return "强流入/强成交 (Strong Inflow)"
+        if change_pct > 0:
+            return "温和流入 (Moderate Inflow)"
+        if change_pct < 0 and volume_ratio >= 1.2:
+            return "强流出/放量下跌 (Strong Outflow)"
+        if change_pct < 0:
+            return "温和流出 (Moderate Outflow)"
+        return "中性 (Neutral)"
 
-            flows["large_cap"] = get_intensity(spy)
-            flows["mega_cap"] = flows["large_cap"] # Simplified
-            flows["small_cap"] = get_intensity(iwm)
-        except:
-            pass
-        return flows
+    def _flow_direction(self, change_pct: float) -> str:
+        if change_pct > 0:
+            return "Inflow"
+        if change_pct < 0:
+            return "Outflow"
+        return "Neutral"
+
+    def _build_flow_detail(
+        self, symbol: str, label: str, category: str, hist
+    ) -> Dict[str, Any]:
+        if hist is None or hist.empty or len(hist) < 2:
+            return {
+                "symbol": symbol,
+                "label": label,
+                "category": category,
+                "direction": "Neutral",
+                "intensity": "N/A",
+                "change_percent": "N/A",
+                "volume_ratio": "N/A",
+                "dollar_volume_proxy_usd": "N/A",
+                "signed_flow_proxy_usd": "N/A",
+            }
+
+        close = hist["Close"].dropna()
+        volume_series = hist["Volume"].dropna()
+        if len(close) < 2 or volume_series.empty:
+            return {
+                "symbol": symbol,
+                "label": label,
+                "category": category,
+                "direction": "Neutral",
+                "intensity": "N/A",
+                "change_percent": "N/A",
+                "volume_ratio": "N/A",
+                "dollar_volume_proxy_usd": "N/A",
+                "signed_flow_proxy_usd": "N/A",
+            }
+
+        latest_close = float(close.iloc[-1])
+        prev_close = float(close.iloc[-2])
+        latest_volume = float(volume_series.iloc[-1])
+        avg_volume = (
+            float(volume_series.tail(10).mean())
+            if len(volume_series) >= 10
+            else float(volume_series.mean())
+        )
+        change_pct = (
+            ((latest_close - prev_close) / prev_close) * 100 if prev_close else 0
+        )
+        volume_ratio = latest_volume / avg_volume if avg_volume else 0
+        dollar_volume = latest_close * latest_volume
+        direction = self._flow_direction(change_pct)
+        signed_flow = (
+            dollar_volume
+            if direction == "Inflow"
+            else -dollar_volume if direction == "Outflow" else 0
+        )
+
+        return {
+            "symbol": symbol,
+            "label": label,
+            "category": category,
+            "direction": direction,
+            "intensity": self._flow_intensity(change_pct, volume_ratio),
+            "change_percent": round(change_pct, 2),
+            "volume_ratio": round(volume_ratio, 2),
+            "dollar_volume_proxy_usd": round(dollar_volume, 2),
+            "signed_flow_proxy_usd": round(signed_flow, 2),
+        }
+
+    def _download_flow_history(self, symbols: List[str]):
+        try:
+            return yf.download(
+                symbols,
+                period="15d",
+                interval="1d",
+                group_by="ticker",
+                progress=False,
+                threads=True,
+                auto_adjust=False,
+                timeout=5,
+            )
+        except Exception as e:
+            self.data["diagnostics"].append(f"flow_history_unavailable: {e}")
+            return None
+
+    def _extract_symbol_history(self, downloaded, symbol: str):
+        if downloaded is None or downloaded.empty:
+            return pd.DataFrame()
+        try:
+            if isinstance(downloaded.columns, pd.MultiIndex):
+                return downloaded[symbol].dropna(how="all")
+            return downloaded.dropna(how="all")
+        except Exception:
+            return pd.DataFrame()
+
+    def _get_market_flow_analysis(self):
+        try:
+            market_targets = [
+                ("SPY", "S&P 500 / 大盘核心", "Broad Market"),
+                ("QQQ", "Nasdaq 100 / 科技成长", "Growth"),
+                ("IWM", "Russell 2000 / 小盘", "Small Cap"),
+                ("DIA", "Dow 30 / 蓝筹", "Blue Chip"),
+                ("RSP", "S&P 500 等权重", "Equal Weight"),
+            ]
+            sector_targets = [
+                ("XLK", "科技 Technology", "Sector"),
+                ("XLF", "金融 Financials", "Sector"),
+                ("XLV", "医疗 Health Care", "Sector"),
+                ("XLY", "可选消费 Consumer Discretionary", "Sector"),
+                ("XLP", "必需消费 Consumer Staples", "Sector"),
+                ("XLE", "能源 Energy", "Sector"),
+                ("XLI", "工业 Industrials", "Sector"),
+                ("XLC", "通信 Communication", "Sector"),
+                ("XLU", "公用事业 Utilities", "Sector"),
+                ("XLB", "材料 Materials", "Sector"),
+                ("XLRE", "房地产 Real Estate", "Sector"),
+            ]
+            all_targets = market_targets + sector_targets
+            downloaded = self._download_flow_history(
+                [symbol for symbol, _, _ in all_targets]
+            )
+
+            details = []
+            for symbol, label, category in all_targets:
+                details.append(
+                    self._build_flow_detail(
+                        symbol,
+                        label,
+                        category,
+                        self._extract_symbol_history(downloaded, symbol),
+                    )
+                )
+
+            market_details = [item for item in details if item["category"] != "Sector"]
+            sector_details = [item for item in details if item["category"] == "Sector"]
+            sector_details.sort(
+                key=lambda item: (
+                    item["signed_flow_proxy_usd"]
+                    if isinstance(item["signed_flow_proxy_usd"], (int, float))
+                    else 0
+                ),
+                reverse=True,
+            )
+
+            def label_for(symbol: str, fallback: str) -> str:
+                match = next(
+                    (item for item in market_details if item["symbol"] == symbol), None
+                )
+                return match["intensity"] if match else fallback
+
+            inflows = [
+                item
+                for item in sector_details
+                if isinstance(item["signed_flow_proxy_usd"], (int, float))
+                and item["signed_flow_proxy_usd"] > 0
+            ]
+            outflows = [
+                item
+                for item in sector_details
+                if isinstance(item["signed_flow_proxy_usd"], (int, float))
+                and item["signed_flow_proxy_usd"] < 0
+            ]
+            outflows.sort(key=lambda item: item["signed_flow_proxy_usd"])
+
+            qqq = next(
+                (item for item in market_details if item["symbol"] == "QQQ"), None
+            )
+            iwm = next(
+                (item for item in market_details if item["symbol"] == "IWM"), None
+            )
+            risk_appetite = "N/A"
+            if (
+                qqq
+                and iwm
+                and isinstance(qqq["change_percent"], (int, float))
+                and isinstance(iwm["change_percent"], (int, float))
+            ):
+                if qqq["change_percent"] > 0 and iwm["change_percent"] > 0:
+                    risk_appetite = "Risk-on：成长与小盘同步吸金"
+                elif qqq["change_percent"] < 0 and iwm["change_percent"] < 0:
+                    risk_appetite = "Risk-off：成长与小盘同步承压"
+                elif qqq["change_percent"] > iwm["change_percent"]:
+                    risk_appetite = "偏成长/科技，资金更集中在 Nasdaq"
+                else:
+                    risk_appetite = "偏小盘/扩散，资金更偏向 Russell 2000"
+
+            return {
+                "market_wide_flow": {
+                    "mega_cap": label_for("SPY", "Neutral"),
+                    "large_cap": label_for("SPY", "Neutral"),
+                    "small_cap": label_for("IWM", "Neutral"),
+                },
+                "market_flow_details": market_details,
+                "sector_flow_details": sector_details,
+                "flow_destination_summary": {
+                    "top_inflow": inflows[0]["label"] if inflows else "N/A",
+                    "top_outflow": outflows[0]["label"] if outflows else "N/A",
+                    "risk_appetite": risk_appetite,
+                },
+            }
+        except Exception as e:
+            self.data["diagnostics"].append(f"market_flow_unavailable: {e}")
+            return {
+                "market_wide_flow": {
+                    "mega_cap": "Neutral",
+                    "large_cap": "Neutral",
+                    "small_cap": "Neutral",
+                },
+                "market_flow_details": [],
+                "sector_flow_details": [],
+                "flow_destination_summary": {
+                    "top_inflow": "N/A",
+                    "top_outflow": "N/A",
+                    "risk_appetite": "N/A",
+                },
+            }
 
     def run_research(self):
         try:
             t = yf.Ticker(self.ticker)
-            
+
             # 1. Price History & Technicals
             try:
                 # Try multiple periods if 1y fails
@@ -187,20 +455,28 @@ class StockResearchEngine:
                     hist = t.history(period="1mo")
                 if hist.empty:
                     hist = t.history(period="5d")
-                
+
                 if not hist.empty:
-                    current_price = float(hist['Close'].iloc[-1])
-                    prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current_price
-                    self.data["price"].update({
-                        "current_price": round(current_price, 3),
-                        "change": round(current_price - prev_close, 3),
-                        "change_percent": round(((current_price - prev_close) / prev_close) * 100, 2)
-                    })
+                    current_price = float(hist["Close"].iloc[-1])
+                    prev_close = (
+                        float(hist["Close"].iloc[-2])
+                        if len(hist) > 1
+                        else current_price
+                    )
+                    self.data["price"].update(
+                        {
+                            "current_price": round(current_price, 3),
+                            "change": round(current_price - prev_close, 3),
+                            "change_percent": round(
+                                ((current_price - prev_close) / prev_close) * 100, 2
+                            ),
+                        }
+                    )
                     self.data["technicals"].update(self._calculate_indicators(hist))
                 else:
                     # Fallback to fast_info if history is empty
                     try:
-                        current_price = t.fast_info['lastPrice']
+                        current_price = t.fast_info["lastPrice"]
                         self.data["price"]["current_price"] = round(current_price, 3)
                     except:
                         current_price = 0
@@ -212,26 +488,44 @@ class StockResearchEngine:
             try:
                 info = t.info
                 if info:
-                    self.data["company_name"] = info.get('longName', self.ticker)
-                    raw_desc = info.get('longBusinessSummary', "N/A")
+                    self.data["company_name"] = info.get("longName", self.ticker)
+                    raw_desc = info.get("longBusinessSummary", "N/A")
                     self.data["description"] = self._summarize_description(raw_desc, 30)
-                    
-                    self.data["price"]["pb_ratio"] = round(float(info.get('priceToBook', 0)), 2) if info.get('priceToBook') else "N/A"
-                    self.data["price"]["pe_ratio"] = round(float(info.get('trailingPE', 0)), 2) if info.get('trailingPE') else "N/A"
-                    
-                    target = info.get('targetMeanPrice')
+
+                    self.data["price"]["pb_ratio"] = (
+                        round(float(info.get("priceToBook", 0)), 2)
+                        if info.get("priceToBook")
+                        else "N/A"
+                    )
+                    self.data["price"]["pe_ratio"] = (
+                        round(float(info.get("trailingPE", 0)), 2)
+                        if info.get("trailingPE")
+                        else "N/A"
+                    )
+
+                    target = info.get("targetMeanPrice")
                     if target and current_price > 0:
-                        self.data["consensus"].update({
-                            "recommendation": str(info.get('recommendationKey', 'N/A')).upper(),
-                            "target_price": round(float(target), 2),
-                            "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1)
-                        })
+                        self.data["consensus"].update(
+                            {
+                                "recommendation": str(
+                                    info.get("recommendationKey", "N/A")
+                                ).upper(),
+                                "target_price": round(float(target), 2),
+                                "upside_potential": round(
+                                    ((float(target) - current_price) / current_price)
+                                    * 100,
+                                    1,
+                                ),
+                            }
+                        )
 
                     # Capital Flow Analysis
                     market_cap = info.get("marketCap")
                     volume = info.get("volume") or info.get("regularMarketVolume")
-                    avg_vol = info.get("averageVolume10days") or info.get("averageVolume")
-                    
+                    avg_vol = info.get("averageVolume10days") or info.get(
+                        "averageVolume"
+                    )
+
                     bucket = "N/A"
                     if isinstance(market_cap, (int, float)):
                         if market_cap >= 200_000_000_000:
@@ -243,7 +537,9 @@ class StockResearchEngine:
                         else:
                             bucket = "小盘 (Small Cap)"
 
-                    ratio = (float(volume) / float(avg_vol)) if volume and avg_vol else None
+                    ratio = (
+                        (float(volume) / float(avg_vol)) if volume and avg_vol else None
+                    )
                     intensity = "N/A"
                     if ratio is not None:
                         if ratio >= 1.5:
@@ -253,7 +549,11 @@ class StockResearchEngine:
                         else:
                             intensity = "偏弱 (Weak/Outflow)"
 
-                    net_flow_proxy = (float(volume) * current_price) if volume and current_price else "N/A"
+                    net_flow_proxy = (
+                        (float(volume) * current_price)
+                        if volume and current_price
+                        else "N/A"
+                    )
                     self.data["capital_flow"] = {
                         "market_bucket": bucket,
                         "market_cap": float(market_cap) if market_cap else "N/A",
@@ -261,8 +561,12 @@ class StockResearchEngine:
                         "avg_volume_10d": float(avg_vol) if avg_vol else "N/A",
                         "volume_ratio": round(ratio, 2) if ratio is not None else "N/A",
                         "estimated_flow_intensity": intensity,
-                        "net_flow_proxy_usd": round(net_flow_proxy, 2) if isinstance(net_flow_proxy, (int, float)) else "N/A",
-                        "market_wide_flow": self._get_market_wide_flow()
+                        "net_flow_proxy_usd": (
+                            round(net_flow_proxy, 2)
+                            if isinstance(net_flow_proxy, (int, float))
+                            else "N/A"
+                        ),
+                        **self._get_market_flow_analysis(),
                     }
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
@@ -279,34 +583,66 @@ class StockResearchEngine:
                     for col in cols:
                         q_date = col
                         period = f"Q{(q_date.month-1)//3 + 1} '{str(q_date.year)[2:]}"
-                        rev = q_fin.loc['Total Revenue', col] if 'Total Revenue' in q_fin.index else 0
-                        ni = q_fin.loc['Net Income', col] if 'Net Income' in q_fin.index else 0
-                        trends.append({
-                            "period": period,
-                            "revenue": float(rev) if not pd.isna(rev) else 0,
-                            "net_income": float(ni) if not pd.isna(ni) else 0
-                        })
+                        rev = (
+                            q_fin.loc["Total Revenue", col]
+                            if "Total Revenue" in q_fin.index
+                            else 0
+                        )
+                        ni = (
+                            q_fin.loc["Net Income", col]
+                            if "Net Income" in q_fin.index
+                            else 0
+                        )
+                        trends.append(
+                            {
+                                "period": period,
+                                "revenue": float(rev) if not pd.isna(rev) else 0,
+                                "net_income": float(ni) if not pd.isna(ni) else 0,
+                            }
+                        )
                     self.data["fundamentals"]["historical_trends"] = trends
 
                     latest_q_date = q_fin.columns[0]
-                    self.data["fundamentals"]["quarter"] = f"Q{(latest_q_date.month-1)//3 + 1} {latest_q_date.year}"
-                    rev = q_fin.loc['Total Revenue'].iloc[0] if 'Total Revenue' in q_fin.index else "N/A"
+                    self.data["fundamentals"][
+                        "quarter"
+                    ] = f"Q{(latest_q_date.month-1)//3 + 1} {latest_q_date.year}"
+                    rev = (
+                        q_fin.loc["Total Revenue"].iloc[0]
+                        if "Total Revenue" in q_fin.index
+                        else "N/A"
+                    )
                     self.data["fundamentals"]["revenue"] = rev
-                    
-                    if len(q_fin.columns) > 4 and 'Total Revenue' in q_fin.index:
-                        prev_rev = q_fin.loc['Total Revenue'].iloc[4]
+
+                    if len(q_fin.columns) > 4 and "Total Revenue" in q_fin.index:
+                        prev_rev = q_fin.loc["Total Revenue"].iloc[4]
                         if prev_rev and prev_rev != 0:
-                            self.data["fundamentals"]["revenue_yoy"] = round(float(((rev - prev_rev) / prev_rev) * 100), 1)
-                    
-                    if 'Gross Profit' in q_fin.index and rev != "N/A" and rev != 0:
-                        self.data["fundamentals"]["gross_margin"] = round(float((q_fin.loc['Gross Profit'].iloc[0] / rev) * 100), 1)
-                    if 'Net Income' in q_fin.index and rev != "N/A" and rev != 0:
-                        self.data["fundamentals"]["net_margin"] = round(float((q_fin.loc['Net Income'].iloc[0] / rev) * 100), 1)
-                
+                            self.data["fundamentals"]["revenue_yoy"] = round(
+                                float(((rev - prev_rev) / prev_rev) * 100), 1
+                            )
+
+                    if "Gross Profit" in q_fin.index and rev != "N/A" and rev != 0:
+                        self.data["fundamentals"]["gross_margin"] = round(
+                            float((q_fin.loc["Gross Profit"].iloc[0] / rev) * 100), 1
+                        )
+                    if "Net Income" in q_fin.index and rev != "N/A" and rev != 0:
+                        self.data["fundamentals"]["net_margin"] = round(
+                            float((q_fin.loc["Net Income"].iloc[0] / rev) * 100), 1
+                        )
+
                 q_bs = t.quarterly_balance_sheet
                 if not q_bs.empty:
-                    cash = q_bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in q_bs.index else \
-                           q_bs.loc['Cash Cash Equivalents And Short Term Investments'].iloc[0] if 'Cash Cash Equivalents And Short Term Investments' in q_bs.index else "N/A"
+                    cash = (
+                        q_bs.loc["Cash And Cash Equivalents"].iloc[0]
+                        if "Cash And Cash Equivalents" in q_bs.index
+                        else (
+                            q_bs.loc[
+                                "Cash Cash Equivalents And Short Term Investments"
+                            ].iloc[0]
+                            if "Cash Cash Equivalents And Short Term Investments"
+                            in q_bs.index
+                            else "N/A"
+                        )
+                    )
                     self.data["fundamentals"]["cash_reserves"] = cash
             except Exception as e:
                 self.data["diagnostics"].append(f"fundamentals_unavailable: {e}")
@@ -315,29 +651,61 @@ class StockResearchEngine:
             rsi = self.data["technicals"]["rsi"]
             pb = self.data["price"]["pb_ratio"]
             rev_yoy = self.data["fundamentals"]["revenue_yoy"]
-            
+
             checklists = []
-            checklists.append({
-                "name": "Technical RSI Monitor",
-                "value": f"RSI: {rsi}",
-                "status": "OVERSOLD" if isinstance(rsi, (int, float)) and rsi <= 35 else "OVERBOUGHT" if isinstance(rsi, (int, float)) and rsi >= 65 else "NORMAL",
-                "triggered": isinstance(rsi, (int, float)) and (rsi <= 35 or rsi >= 65),
-                "description": "RSI below 35 suggests oversold (potential buy), above 65 suggests overbought (potential risk)."
-            })
-            checklists.append({
-                "name": "Valuation (PB) Monitor",
-                "value": f"PB: {pb}",
-                "status": "UNDERVALUED" if (isinstance(pb, (int, float)) and 0 < pb <= 1.5) else "NORMAL",
-                "triggered": isinstance(pb, (int, float)) and 0 < pb <= 1.5,
-                "description": "PB ratio below 1.5 often indicates the stock is trading near or below its book value."
-            })
-            checklists.append({
-                "name": "Revenue Growth Monitor",
-                "value": f"YoY: {rev_yoy}%" if isinstance(rev_yoy, (int, float)) else "N/A",
-                "status": "HIGH GROWTH" if (isinstance(rev_yoy, (int, float)) and rev_yoy > 20) else "STAGNANT" if (isinstance(rev_yoy, (int, float)) and rev_yoy < 0) else "NORMAL",
-                "triggered": isinstance(rev_yoy, (int, float)) and (rev_yoy > 20 or rev_yoy < 0),
-                "description": "Revenue growth > 20% is a strong positive signal; negative growth is a warning."
-            })
+            checklists.append(
+                {
+                    "name": "Technical RSI Monitor",
+                    "value": f"RSI: {rsi}",
+                    "status": (
+                        "OVERSOLD"
+                        if isinstance(rsi, (int, float)) and rsi <= 35
+                        else (
+                            "OVERBOUGHT"
+                            if isinstance(rsi, (int, float)) and rsi >= 65
+                            else "NORMAL"
+                        )
+                    ),
+                    "triggered": isinstance(rsi, (int, float))
+                    and (rsi <= 35 or rsi >= 65),
+                    "description": "RSI below 35 suggests oversold (potential buy), above 65 suggests overbought (potential risk).",
+                }
+            )
+            checklists.append(
+                {
+                    "name": "Valuation (PB) Monitor",
+                    "value": f"PB: {pb}",
+                    "status": (
+                        "UNDERVALUED"
+                        if (isinstance(pb, (int, float)) and 0 < pb <= 1.5)
+                        else "NORMAL"
+                    ),
+                    "triggered": isinstance(pb, (int, float)) and 0 < pb <= 1.5,
+                    "description": "PB ratio below 1.5 often indicates the stock is trading near or below its book value.",
+                }
+            )
+            checklists.append(
+                {
+                    "name": "Revenue Growth Monitor",
+                    "value": (
+                        f"YoY: {rev_yoy}%"
+                        if isinstance(rev_yoy, (int, float))
+                        else "N/A"
+                    ),
+                    "status": (
+                        "HIGH GROWTH"
+                        if (isinstance(rev_yoy, (int, float)) and rev_yoy > 20)
+                        else (
+                            "STAGNANT"
+                            if (isinstance(rev_yoy, (int, float)) and rev_yoy < 0)
+                            else "NORMAL"
+                        )
+                    ),
+                    "triggered": isinstance(rev_yoy, (int, float))
+                    and (rev_yoy > 20 or rev_yoy < 0),
+                    "description": "Revenue growth > 20% is a strong positive signal; negative growth is a warning.",
+                }
+            )
             self.data["checklists"] = checklists
 
             return self.data
@@ -347,10 +715,14 @@ class StockResearchEngine:
 
     def output_json(self):
         def serialize(obj):
-            if hasattr(obj, 'item'): return obj.item()
-            if isinstance(obj, (datetime, pd.Timestamp)): return obj.isoformat()
+            if hasattr(obj, "item"):
+                return obj.item()
+            if isinstance(obj, (datetime, pd.Timestamp)):
+                return obj.isoformat()
             return str(obj)
+
         print(json.dumps(self.data, ensure_ascii=False, default=serialize))
+
 
 if __name__ == "__main__":
     ticker = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
