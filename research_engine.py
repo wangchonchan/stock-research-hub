@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Stock Research Engine v3.0 - Enhanced with Historical Trends, Sentiment, and Smart Checklists
+Stock Research Engine v3.1 - Fixed bugs and enhanced with Capital Flow Analysis
 """
 
 import json
@@ -33,7 +33,7 @@ class StockResearchEngine:
                 "gross_margin": "N/A",
                 "net_margin": "N/A",
                 "cash_reserves": "N/A",
-                "historical_trends": [] # [{period: "Q1", revenue: 100, net_income: 20}]
+                "historical_trends": []
             },
             "technicals": {
                 "rsi": "N/A",
@@ -43,8 +43,18 @@ class StockResearchEngine:
                 "bias_24": "N/A",
                 "cci_14": "N/A"
             },
+            "capital_flow": {
+                "market_bucket": "N/A",
+                "market_cap": "N/A",
+                "volume": "N/A",
+                "avg_volume_10d": "N/A",
+                "volume_ratio": "N/A",
+                "estimated_flow_intensity": "N/A",
+                "net_flow_proxy_usd": "N/A"
+            },
             "news": [],
-            "checklists": [] # List of objects for better ordering
+            "checklists": [],
+            "diagnostics": []
         }
 
     def _summarize_description(self, text: str, max_words: int = 30) -> str:
@@ -138,33 +148,29 @@ class StockResearchEngine:
     def run_research(self):
         try:
             t = yf.Ticker(self.ticker)
-            hist = t.history(period="1y")
-            if hist.empty: hist = t.history(period="1mo")
-            hist = pd.DataFrame()
+            
+            # 1. Price History & Technicals
             try:
                 hist = t.history(period="1y")
                 if hist.empty:
                     hist = t.history(period="1mo")
-            except Exception as e:
-                hist = pd.DataFrame()
-                err = str(e)
-                if "CONNECT tunnel failed" in err or "curl: (56)" in err:
-                    self.data["diagnostics"].append("price_history_unavailable: network/proxy blocked upstream market data")
+                
+                if not hist.empty:
+                    current_price = float(hist['Close'].iloc[-1])
+                    prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current_price
+                    self.data["price"].update({
+                        "current_price": round(current_price, 3),
+                        "change": round(current_price - prev_close, 3),
+                        "change_percent": round(((current_price - prev_close) / prev_close) * 100, 2)
+                    })
+                    self.data["technicals"].update(self._calculate_indicators(hist))
                 else:
-                    self.data["diagnostics"].append(f"price_history_unavailable: {err}")
-                self.data["data_source_status"] = "degraded"
-            
-            current_price = 0
-            if not hist.empty:
-                current_price = float(hist['Close'].iloc[-1])
-                prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current_price
-                self.data["price"].update({
-                    "current_price": round(current_price, 3),
-                    "change": round(current_price - prev_close, 3),
-                    "change_percent": round(((current_price - prev_close) / prev_close) * 100, 2)
-                })
-                self.data["technicals"].update(self._calculate_indicators(hist))
+                    current_price = 0
+            except Exception as e:
+                self.data["diagnostics"].append(f"price_history_unavailable: {e}")
+                current_price = 0
 
+            # 2. Company Info & Capital Flow
             try:
                 info = t.info
                 if info:
@@ -181,31 +187,31 @@ class StockResearchEngine:
                         "target_price": round(float(target), 2) if target else "N/A",
                         "upside_potential": round(((float(target) - current_price) / current_price) * 100, 1) if target and current_price > 0 else "N/A"
                     })
-            except: pass
 
+                    # Capital Flow Analysis
                     market_cap = info.get("marketCap")
                     volume = info.get("volume")
                     avg_vol = info.get("averageVolume10days") or info.get("averageVolume")
                     bucket = "N/A"
                     if isinstance(market_cap, (int, float)):
                         if market_cap >= 200_000_000_000:
-                            bucket = "特大盘"
+                            bucket = "特大盘 (Mega Cap)"
                         elif market_cap >= 10_000_000_000:
-                            bucket = "大盘"
+                            bucket = "大盘 (Large Cap)"
                         elif market_cap >= 2_000_000_000:
-                            bucket = "中盘"
+                            bucket = "中盘 (Mid Cap)"
                         else:
-                            bucket = "小盘"
+                            bucket = "小盘 (Small Cap)"
 
                     ratio = (float(volume) / float(avg_vol)) if volume and avg_vol else None
                     intensity = "N/A"
                     if ratio is not None:
                         if ratio >= 1.5:
-                            intensity = "强流入/强成交"
+                            intensity = "强流入/强成交 (Strong Inflow)"
                         elif ratio >= 1.0:
-                            intensity = "中性偏强"
+                            intensity = "中性偏强 (Moderate Inflow)"
                         else:
-                            intensity = "偏弱"
+                            intensity = "偏弱 (Weak/Outflow)"
 
                     net_flow_proxy = (float(volume) * current_price) if volume and current_price else "N/A"
                     self.data["capital_flow"] = {
@@ -219,16 +225,16 @@ class StockResearchEngine:
                     }
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
-                self.data["data_source_status"] = "degraded"
 
+            # 3. News
             self._fetch_google_news()
 
+            # 4. Fundamentals
             try:
                 q_fin = t.quarterly_financials
                 if not q_fin.empty:
-                    # Historical Trends (Last 4 quarters)
                     trends = []
-                    cols = q_fin.columns[:4][::-1] # Get last 4, oldest first
+                    cols = q_fin.columns[:4][::-1]
                     for col in cols:
                         q_date = col
                         period = f"Q{(q_date.month-1)//3 + 1} '{str(q_date.year)[2:]}"
@@ -245,10 +251,12 @@ class StockResearchEngine:
                     self.data["fundamentals"]["quarter"] = f"Q{(latest_q_date.month-1)//3 + 1} {latest_q_date.year}"
                     rev = q_fin.loc['Total Revenue'].iloc[0] if 'Total Revenue' in q_fin.index else "N/A"
                     self.data["fundamentals"]["revenue"] = rev
+                    
                     if len(q_fin.columns) > 4 and 'Total Revenue' in q_fin.index:
                         prev_rev = q_fin.loc['Total Revenue'].iloc[4]
                         if prev_rev and prev_rev != 0:
                             self.data["fundamentals"]["revenue_yoy"] = round(float(((rev - prev_rev) / prev_rev) * 100), 1)
+                    
                     if 'Gross Profit' in q_fin.index and rev != "N/A" and rev != 0:
                         self.data["fundamentals"]["gross_margin"] = round(float((q_fin.loc['Gross Profit'].iloc[0] / rev) * 100), 1)
                     if 'Net Income' in q_fin.index and rev != "N/A" and rev != 0:
@@ -261,17 +269,13 @@ class StockResearchEngine:
                     self.data["fundamentals"]["cash_reserves"] = cash
             except Exception as e:
                 self.data["diagnostics"].append(f"fundamentals_unavailable: {e}")
-                self.data["data_source_status"] = "degraded"
 
-            # Smart Checklists
+            # 5. Smart Checklists
             rsi = self.data["technicals"]["rsi"]
             pb = self.data["price"]["pb_ratio"]
-            pe = self.data["price"]["pe_ratio"]
             rev_yoy = self.data["fundamentals"]["revenue_yoy"]
             
             checklists = []
-            
-            # 1. RSI Monitor
             checklists.append({
                 "name": "Technical RSI Monitor",
                 "value": f"RSI: {rsi}",
@@ -279,8 +283,6 @@ class StockResearchEngine:
                 "triggered": isinstance(rsi, (int, float)) and (rsi <= 35 or rsi >= 65),
                 "description": "RSI below 35 suggests oversold (potential buy), above 65 suggests overbought (potential risk)."
             })
-            
-            # 2. Valuation Monitor
             checklists.append({
                 "name": "Valuation (PB) Monitor",
                 "value": f"PB: {pb}",
@@ -288,8 +290,6 @@ class StockResearchEngine:
                 "triggered": isinstance(pb, (int, float)) and 0 < pb <= 1.5,
                 "description": "PB ratio below 1.5 often indicates the stock is trading near or below its book value."
             })
-            
-            # 3. Growth Monitor
             checklists.append({
                 "name": "Revenue Growth Monitor",
                 "value": f"YoY: {rev_yoy}%" if isinstance(rev_yoy, (int, float)) else "N/A",
@@ -297,43 +297,8 @@ class StockResearchEngine:
                 "triggered": isinstance(rev_yoy, (int, float)) and (rev_yoy > 20 or rev_yoy < 0),
                 "description": "Revenue growth > 20% is a strong positive signal; negative growth is a warning."
             })
-
-            # Smart Checklists
-            rsi = self.data["technicals"]["rsi"]
-            pb = self.data["price"]["pb_ratio"]
-            pe = self.data["price"]["pe_ratio"]
-            rev_yoy = self.data["fundamentals"]["revenue_yoy"]
-            
-            checklists = []
-            
-            # 1. RSI Monitor
-            checklists.append({
-                "name": "Technical RSI Monitor",
-                "value": f"RSI: {rsi}",
-                "status": "OVERSOLD" if isinstance(rsi, (int, float)) and rsi <= 35 else "OVERBOUGHT" if isinstance(rsi, (int, float)) and rsi >= 65 else "NORMAL",
-                "triggered": isinstance(rsi, (int, float)) and (rsi <= 35 or rsi >= 65),
-                "description": "RSI below 35 suggests oversold (potential buy), above 65 suggests overbought (potential risk)."
-            })
-            
-            # 2. Valuation Monitor
-            checklists.append({
-                "name": "Valuation (PB) Monitor",
-                "value": f"PB: {pb}",
-                "status": "UNDERVALUED" if (isinstance(pb, (int, float)) and 0 < pb <= 1.5) else "NORMAL",
-                "triggered": isinstance(pb, (int, float)) and 0 < pb <= 1.5,
-                "description": "PB ratio below 1.5 often indicates the stock is trading near or below its book value."
-            })
-            
-            # 3. Growth Monitor
-            checklists.append({
-                "name": "Revenue Growth Monitor",
-                "value": f"YoY: {rev_yoy}%" if isinstance(rev_yoy, (int, float)) else "N/A",
-                "status": "HIGH GROWTH" if (isinstance(rev_yoy, (int, float)) and rev_yoy > 20) else "STAGNANT" if (isinstance(rev_yoy, (int, float)) and rev_yoy < 0) else "NORMAL",
-                "triggered": isinstance(rev_yoy, (int, float)) and (rev_yoy > 20 or rev_yoy < 0),
-                "description": "Revenue growth > 20% is a strong positive signal; negative growth is a warning."
-            })
-
             self.data["checklists"] = checklists
+
             return self.data
         except Exception as e:
             print(f"Error in research: {e}", file=sys.stderr)

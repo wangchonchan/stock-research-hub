@@ -7,10 +7,7 @@ import {
   Loader2, Search, TrendingUp, BarChart3, 
   Activity, Clock, CheckCircle2, AlertCircle, 
   Info, Newspaper, ExternalLink, Download,
-  TrendingDown, Minus
-  Activity, Clock, X, CheckCircle2, AlertCircle, 
-  Info, Newspaper, ExternalLink, TrendingDown, Minus,
-  ArrowLeftRight
+  TrendingDown, Minus, ArrowLeftRight, Wallet
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -48,6 +45,16 @@ interface ChecklistItem {
   description: string;
 }
 
+interface CapitalFlow {
+  market_bucket: string;
+  market_cap: number | string;
+  volume: number | string;
+  avg_volume_10d: number | string;
+  volume_ratio: number | string;
+  estimated_flow_intensity: string;
+  net_flow_proxy_usd: number | string;
+}
+
 interface StockData {
   ticker: string;
   company_name: string;
@@ -83,6 +90,7 @@ interface StockData {
     bias_24: number | string;
     cci_14: number | string;
   };
+  capital_flow: CapitalFlow;
   news: NewsItem[];
   checklists: ChecklistItem[];
 }
@@ -95,7 +103,7 @@ interface HistoryItem {
   data: StockData;
 }
 
-const HISTORY_STORAGE_KEY = "stock_research_history_v8";
+const HISTORY_STORAGE_KEY = "stock_research_history_v9";
 
 export default function Home() {
   const [ticker, setTicker] = useState("");
@@ -142,15 +150,15 @@ export default function Home() {
       const newItem: HistoryItem = {
         id: Date.now().toString(),
         ticker: result.ticker,
-        timestamp: new Date().toLocaleString("en-US", { timeZone: "Asia/Hong_Kong" }),
+        timestamp: new Date().toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" }),
         price: result.price.current_price,
         data: result
       };
-      setHistory([newItem, ...history].slice(0, 20));
-      toast.success(`Updated research for ${searchTicker.toUpperCase()}`);
+      setHistory(prev => [newItem, ...prev.filter(h => h.ticker !== result.ticker)].slice(0, 20));
+      toast.success(`已更新 ${searchTicker.toUpperCase()} 的研究数据`);
     } catch (error) {
       console.error(error);
-      toast.error("Error updating stock data.");
+      toast.error("更新股票数据时出错");
     } finally {
       setLoading(false);
     }
@@ -167,32 +175,23 @@ export default function Home() {
         <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 print:hidden">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white w-10 h-10 flex items-center justify-center rounded-lg font-bold text-xl">S</div>
-            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.0</h1>
+            <h1 className="text-2xl font-bold text-slate-900">股票研究中心 v3.1</h1>
           </div>
           <div className="flex gap-2 w-full md:w-auto">
             <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex flex-1 gap-2">
-              <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
+              <Input placeholder="股票代码 (如: TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
               <Button type="submit" disabled={loading}>
                 {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-                Update
+                更新
               </Button>
             </form>
             {data && (
               <Button variant="outline" onClick={exportReport}>
                 <Download className="mr-2 h-4 w-4" />
-                Export
+                导出
               </Button>
             )}
           </div>
-            <h1 className="text-2xl font-bold text-slate-900">Stock Research Hub v3.1</h1>
-          </div>
-          <form onSubmit={(e) => { e.preventDefault(); handleSearch(ticker); }} className="flex w-full md:w-auto gap-2">
-            <Input placeholder="Stock Code (e.g. TSLA)" value={ticker} onChange={(e) => setTicker(e.target.value)} className="bg-white" />
-            <Button type="submit" disabled={loading}>
-              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-              Update
-            </Button>
-          </form>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -201,7 +200,7 @@ export default function Home() {
             {!data && !loading && (
               <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200">
                 <BarChart3 className="mx-auto h-12 w-12 text-slate-300 mb-4" />
-                <h2 className="text-xl font-medium text-slate-600">Enter a stock ticker to start research</h2>
+                <h2 className="text-xl font-medium text-slate-600">输入股票代码开始研究</h2>
               </div>
             )}
 
@@ -224,7 +223,7 @@ export default function Home() {
                         <p className="text-slate-400 text-sm max-w-2xl leading-relaxed">
                           {data.description}
                         </p>
-                        <p className="text-slate-500 text-xs mt-2">Last Updated: {data.updated_at} (HKT)</p>
+                        <p className="text-slate-500 text-xs mt-2">最后更新: {data.updated_at} (HKT)</p>
                       </div>
                       <div className="text-right">
                         <div className="text-4xl font-bold">${data.price.current_price.toFixed(2)}</div>
@@ -237,26 +236,84 @@ export default function Home() {
                     
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">Consensus</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">共识建议</p>
                         <p className="text-lg font-bold text-blue-400">{data.consensus.recommendation}</p>
                       </div>
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">Target Price</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">目标价</p>
                         <p className="text-lg font-bold">${data.consensus.target_price}</p>
                       </div>
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">Upside</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">上涨空间</p>
                         <p className={`text-lg font-bold ${Number(data.consensus.upside_potential) > 0 ? "text-emerald-400" : "text-rose-400"}`}>
                           {data.consensus.upside_potential}%
                         </p>
                       </div>
                       <div className="bg-white/5 p-4 rounded-xl border border-white/10">
-                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">PB Ratio</p>
+                        <p className="text-slate-500 text-xs uppercase font-bold tracking-wider mb-1">市净率 (PB)</p>
                         <p className="text-lg font-bold">{data.price.pb_ratio}</p>
                       </div>
                     </div>
                   </div>
                 </div>
+
+                {/* Capital Flow Analysis Section */}
+                <Card className="shadow-sm border-slate-200 overflow-hidden">
+                  <CardHeader className="bg-slate-50/50 border-b">
+                    <CardTitle className="text-lg font-bold flex items-center gap-2">
+                      <Wallet className="text-blue-600" />
+                      资金流入分析 (Capital Flow Analysis)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">市值分类</p>
+                          <p className="text-xl font-bold text-slate-900">{data.capital_flow.market_bucket}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">总市值</p>
+                          <p className="text-xl font-bold text-slate-900">{formatLargeNumber(data.capital_flow.market_cap)}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">当日成交量</p>
+                          <p className="text-xl font-bold text-slate-900">{Number(data.capital_flow.volume).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">10日平均成交量</p>
+                          <p className="text-xl font-bold text-slate-900">{Number(data.capital_flow.avg_volume_10d).toLocaleString()}</p>
+                        </div>
+                      </div>
+                      <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                        <div className="mb-3">
+                          <p className="text-sm text-blue-600 font-bold mb-1">成交量比率 (Volume Ratio)</p>
+                          <p className="text-2xl font-black text-blue-900">{data.capital_flow.volume_ratio}x</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-blue-600 font-bold mb-1">资金强度评估</p>
+                          <Badge className="bg-blue-600 text-white">
+                            {data.capital_flow.estimated_flow_intensity}
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-6 pt-6 border-t flex flex-col md:flex-row justify-between items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <Info size={16} className="text-slate-400" />
+                        <p className="text-xs text-slate-500">
+                          注：资金流入强度基于当日成交量与10日均量的对比估算。
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">预估净流向 (USD Proxy)</p>
+                        <p className="text-lg font-bold text-slate-900">{formatLargeNumber(data.capital_flow.net_flow_proxy_usd)}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
                 {/* Charts Section */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -264,7 +321,7 @@ export default function Home() {
                     <CardHeader>
                       <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                         <BarChart3 size={16} className="text-blue-600" />
-                        Revenue Trend (Last 4 Quarters)
+                        营收趋势 (最近4个季度)
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -277,7 +334,7 @@ export default function Home() {
                               tickFormatter={(value) => `$${(value / 1e9).toFixed(0)}B`} />
                             <Tooltip 
                               contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                              formatter={(value: number) => [formatLargeNumber(value), "Revenue"]}
+                              formatter={(value: number) => [formatLargeNumber(value), "营收"]}
                             />
                             <Bar dataKey="revenue" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                           </BarChart>
@@ -290,7 +347,7 @@ export default function Home() {
                     <CardHeader>
                       <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
                         <Activity size={16} className="text-emerald-600" />
-                        Net Income Trend
+                        净利润趋势
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -303,7 +360,7 @@ export default function Home() {
                               tickFormatter={(value) => `$${(value / 1e9).toFixed(0)}B`} />
                             <Tooltip 
                               contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                              formatter={(value: number) => [formatLargeNumber(value), "Net Income"]}
+                              formatter={(value: number) => [formatLargeNumber(value), "净利润"]}
                             />
                             <Line type="monotone" dataKey="net_income" stroke="#10b981" strokeWidth={3} dot={{ r: 4, fill: '#10b981' }} activeDot={{ r: 6 }} />
                           </LineChart>
@@ -313,34 +370,34 @@ export default function Home() {
                   </Card>
                 </div>
 
-                {/* Technical Indicators Grid (RESTORED) */}
+                {/* Technical Indicators Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <Card>
                     <CardHeader className="flex flex-row items-center gap-2">
                       <TrendingUp className="h-5 w-5 text-blue-600" />
-                      <CardTitle>Key Fundamentals ({data.fundamentals.quarter})</CardTitle>
+                      <CardTitle>核心基本面 ({data.fundamentals.quarter})</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">Revenue</span>
+                        <span className="text-slate-500">营收</span>
                         <span className="font-semibold">{formatLargeNumber(data.fundamentals.revenue)}</span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">YoY Growth</span>
+                        <span className="text-slate-500">同比增长 (YoY)</span>
                         <span className={`font-semibold ${typeof data.fundamentals.revenue_yoy === 'number' && data.fundamentals.revenue_yoy >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                           {typeof data.fundamentals.revenue_yoy === 'number' ? `${data.fundamentals.revenue_yoy > 0 ? '+' : ''}${data.fundamentals.revenue_yoy}%` : data.fundamentals.revenue_yoy}
                         </span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">Gross Margin</span>
+                        <span className="text-slate-500">毛利率</span>
                         <span className="font-semibold">{data.fundamentals.gross_margin}{typeof data.fundamentals.gross_margin === 'number' ? '%' : ''}</span>
                       </div>
                       <div className="flex justify-between border-b pb-2">
-                        <span className="text-slate-500">Net Margin</span>
+                        <span className="text-slate-500">净利率</span>
                         <span className="font-semibold">{data.fundamentals.net_margin}{typeof data.fundamentals.net_margin === 'number' ? '%' : ''}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-500">Cash Reserves</span>
+                        <span className="text-slate-500">现金储备</span>
                         <span className="font-semibold">{formatLargeNumber(data.fundamentals.cash_reserves)}</span>
                       </div>
                     </CardContent>
@@ -349,7 +406,7 @@ export default function Home() {
                   <Card>
                     <CardHeader className="flex flex-row items-center gap-2">
                       <Activity className="h-5 w-5 text-blue-600" />
-                      <CardTitle>Technical Indicators</CardTitle>
+                      <CardTitle>技术指标</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex justify-between border-b pb-2">
@@ -383,7 +440,7 @@ export default function Home() {
                   <CardHeader>
                     <CardTitle className="text-lg font-bold flex items-center gap-2">
                       <CheckCircle2 className="text-blue-600" />
-                      Smart Investment Checklist
+                      智能投资检查清单
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -409,7 +466,7 @@ export default function Home() {
                   <CardHeader>
                     <CardTitle className="text-lg font-bold flex items-center gap-2">
                       <Newspaper className="text-blue-600" />
-                      Latest News & Sentiment Analysis
+                      最新新闻与情绪分析
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -439,7 +496,7 @@ export default function Home() {
                                 item.sentiment === 'Positive' ? 'text-emerald-600 border-emerald-200' : 
                                 item.sentiment === 'Negative' ? 'text-rose-600 border-rose-200' : 'text-slate-400 border-slate-200'
                               }`}>
-                                {item.sentiment}
+                                {item.sentiment === 'Positive' ? '看多' : item.sentiment === 'Negative' ? '看空' : '中性'}
                               </Badge>
                             </div>
                           </div>
@@ -457,91 +514,38 @@ export default function Home() {
             <Card className="sticky top-8 shadow-sm border-slate-200">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                  <Clock size={16} />
-                  Recent Research
+                  <Clock size={16} className="text-blue-600" />
+                  最近搜索
                 </CardTitle>
-                  History
-                </CardTitle>
-                {selectedForCompare.length === 2 && (
-                  <Dialog open={isCompareOpen} onOpenChange={setIsCompareOpen}>
-                    <DialogTrigger asChild>
-                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1">
-                        <ArrowLeftRight size={12} /> Compare
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-                      <DialogHeader>
-                        <DialogTitle>Stock Comparison</DialogTitle>
-                      </DialogHeader>
-                      <div className="grid grid-cols-2 gap-4 mt-4">
-                        {getCompareItems().map((item) => (
-                          <div key={item.id} className="space-y-4">
-                            <div className="p-4 bg-slate-900 text-white rounded-xl">
-                              <h3 className="text-2xl font-bold">{item.ticker}</h3>
-                              <p className="text-slate-400 text-sm">${item.price.toFixed(2)}</p>
-                            </div>
-                            <div className="space-y-2 text-sm">
-                              <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">Recommendation</span>
-                                <span className="font-bold">{item.data.consensus.recommendation}</span>
-                              </div>
-                              <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">Target Price</span>
-                                <span className="font-bold">${item.data.consensus.target_price}</span>
-                              </div>
-                              <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">Upside</span>
-                                <span className="font-bold">{item.data.consensus.upside_potential}%</span>
-                              </div>
-                              <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">PB Ratio</span>
-                                <span className="font-bold">{item.data.price.pb_ratio}</span>
-                              </div>
-                              <div className="flex justify-between border-b py-1">
-                                <span className="text-slate-500">RSI (14)</span>
-                                <span className="font-bold">{item.data.technicals.rsi}</span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                )}
               </CardHeader>
               <CardContent className="px-2">
-                <div className="space-y-1">
-                  {history.length === 0 && (
-                    <p className="text-xs text-slate-400 text-center py-4">No history yet</p>
-                  )}
-                  {history.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => setData(item.data)}
-                      className={`w-full text-left p-3 rounded-lg transition-all hover:bg-slate-50 group flex justify-between items-center ${data?.ticker === item.ticker ? 'bg-blue-50 border-l-4 border-blue-600' : ''}`}
-                    >
-                      <div>
-                        <div className="font-bold text-slate-900">{item.ticker}</div>
-                        <div className="text-[10px] text-slate-400">{item.timestamp}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-slate-700">${item.price.toFixed(2)}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                {history.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-8">暂无搜索记录</p>
+                ) : (
+                  <div className="space-y-1">
+                    {history.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => setData(item.data)}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl transition-all hover:bg-slate-100 group ${data?.ticker === item.ticker ? "bg-blue-50 border-blue-100" : ""}`}
+                      >
+                        <div className="text-left">
+                          <p className="font-bold text-slate-900">{item.ticker}</p>
+                          <p className="text-[10px] text-slate-400">{item.timestamp}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-slate-900">${item.price.toFixed(2)}</p>
+                          <ArrowLeftRight size={14} className="ml-auto text-slate-300 group-hover:text-blue-500" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         </div>
       </div>
-      
-      {/* Footer */}
-      <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs print:hidden">
-        <p>© 2026 Stock Research Hub v3.0 • Data provided by Yahoo Finance & Google News</p>
-      <footer className="mt-12 py-8 border-t border-slate-200 text-center text-slate-400 text-xs">
-        <p>© 2026 Stock Research Hub v3.1 • Data provided by Yahoo Finance & Google News</p>
-      </footer>
     </div>
   );
 }
