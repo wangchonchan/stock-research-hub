@@ -88,7 +88,6 @@ interface StockData {
     cci_14: number | string;
   };
   news: NewsItem[];
-  checklists?: ChecklistItem[];
   checklists: ChecklistItem[];
   capital_flow?: {
     market_bucket: string;
