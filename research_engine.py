@@ -71,6 +71,7 @@ class StockResearchEngine:
                     "large_cap": "Neutral",
                     "small_cap": "Neutral",
                 },
+                "market_flow_source": "N/A",
                 "market_flow_details": [],
                 "sector_flow_details": [],
                 "flow_destination_summary": {
@@ -366,6 +367,39 @@ class StockResearchEngine:
             self.data["diagnostics"].append(f"stooq_quote_unavailable: {e}")
             return False
 
+    def _stooq_symbol(self, symbol: str) -> str:
+        normalized = symbol.lower().replace("-", ".")
+        if "." not in normalized:
+            normalized = f"{normalized}.us"
+        return normalized
+
+    def _fetch_stooq_history(self, symbol: str, days: int = 25) -> pd.DataFrame:
+        end_date = datetime.now(timezone.utc).date()
+        start_date = end_date - timedelta(days=days * 2)
+        response = self._request_get(
+            "https://stooq.com/q/d/l/",
+            params={
+                "s": self._stooq_symbol(symbol),
+                "d1": start_date.strftime("%Y%m%d"),
+                "d2": end_date.strftime("%Y%m%d"),
+                "i": "d",
+            },
+        )
+        rows = list(csv.DictReader(StringIO(response.text)))
+        if not rows or "No data" in response.text:
+            return pd.DataFrame()
+
+        frame = pd.DataFrame(rows)
+        required = {"Date", "Open", "High", "Low", "Close", "Volume"}
+        if not required.issubset(frame.columns):
+            return pd.DataFrame()
+
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+        frame = frame.dropna(subset=["Date", "Close"]).set_index("Date")
+        return frame.tail(days)
+
     def _fetch_alpha_vantage_overview(self) -> Optional[Dict[str, Any]]:
         api_key = self._get_alpha_vantage_key()
         if not api_key:
@@ -612,7 +646,7 @@ class StockResearchEngine:
                 f"yahoo_institutional_flow_unavailable: {e}"
             )
             return self._empty_institutional_flow(
-                f"Yahoo Finance 机构持仓请求失败：{e}"
+                "Yahoo Finance 机构持仓当前不可用；已在 diagnostics 保留详细错误。可配置 ALPHA_VANTAGE_API_KEY 启用备用 13F 数据源。"
             )
 
     def _fetch_alpha_vantage_institutional_flow(self) -> Dict[str, Any]:
@@ -882,7 +916,9 @@ class StockResearchEngine:
             }
         except Exception as e:
             self.data["diagnostics"].append(f"options_flow_unavailable: {e}")
-            return self._empty_options_flow(f"Yahoo Finance 期权链请求失败：{e}")
+            return self._empty_options_flow(
+                "Yahoo Finance 期权链当前不可用；已在 diagnostics 保留详细错误，页面将继续展示其它可用数据。"
+            )
 
     def _flow_intensity(self, change_pct: float, volume_ratio: float) -> str:
         if change_pct > 0 and volume_ratio >= 1.2:
@@ -966,8 +1002,31 @@ class StockResearchEngine:
         }
 
     def _download_flow_history(self, symbols: List[str]):
+        stooq_results = {}
+        stooq_errors = []
+        for symbol in symbols:
+            try:
+                hist = self._fetch_stooq_history(symbol, days=20)
+                if not hist.empty:
+                    stooq_results[symbol] = hist
+            except Exception as e:
+                stooq_errors.append(f"{symbol}: {e}")
+
+        if stooq_results:
+            missing = [symbol for symbol in symbols if symbol not in stooq_results]
+            if missing:
+                self.data["diagnostics"].append(
+                    f"stooq_flow_partial: missing {', '.join(missing[:6])}"
+                )
+            return {"source": "Stooq delayed ETF daily CSV", "data": stooq_results}
+
+        if stooq_errors:
+            self.data["diagnostics"].append(
+                f"stooq_flow_unavailable: {'; '.join(stooq_errors[:3])}"
+            )
+
         try:
-            return yf.download(
+            downloaded = yf.download(
                 symbols,
                 period="15d",
                 interval="1d",
@@ -977,17 +1036,28 @@ class StockResearchEngine:
                 auto_adjust=False,
                 timeout=5,
             )
+            if downloaded is not None and not downloaded.empty:
+                return {
+                    "source": "Yahoo Finance ETF download fallback",
+                    "data": downloaded,
+                }
+            return {"source": "N/A", "data": None}
         except Exception as e:
             self.data["diagnostics"].append(f"flow_history_unavailable: {e}")
-            return None
+            return {"source": "N/A", "data": None}
 
     def _extract_symbol_history(self, downloaded, symbol: str):
-        if downloaded is None or downloaded.empty:
+        if not downloaded:
+            return pd.DataFrame()
+        source_data = downloaded.get("data")
+        if isinstance(source_data, dict):
+            return source_data.get(symbol, pd.DataFrame())
+        if source_data is None or getattr(source_data, "empty", True):
             return pd.DataFrame()
         try:
-            if isinstance(downloaded.columns, pd.MultiIndex):
-                return downloaded[symbol].dropna(how="all")
-            return downloaded.dropna(how="all")
+            if isinstance(source_data.columns, pd.MultiIndex):
+                return source_data[symbol].dropna(how="all")
+            return source_data.dropna(how="all")
         except Exception:
             return pd.DataFrame()
 
@@ -1017,6 +1087,7 @@ class StockResearchEngine:
             downloaded = self._download_flow_history(
                 [symbol for symbol, _, _ in all_targets]
             )
+            flow_source = downloaded.get("source", "N/A") if downloaded else "N/A"
 
             details = []
             for symbol, label, category in all_targets:
@@ -1088,6 +1159,7 @@ class StockResearchEngine:
                     "large_cap": label_for("SPY", "Neutral"),
                     "small_cap": label_for("IWM", "Neutral"),
                 },
+                "market_flow_source": flow_source,
                 "market_flow_details": market_details,
                 "sector_flow_details": sector_details,
                 "flow_destination_summary": {
@@ -1104,6 +1176,7 @@ class StockResearchEngine:
                     "large_cap": "Neutral",
                     "small_cap": "Neutral",
                 },
+                "market_flow_source": "N/A",
                 "market_flow_details": [],
                 "sector_flow_details": [],
                 "flow_destination_summary": {
@@ -1156,8 +1229,8 @@ class StockResearchEngine:
 
             if current_price <= 0:
                 if (
-                    self._apply_alpha_vantage_global_quote()
-                    or self._apply_stooq_quote_fallback()
+                    self._apply_stooq_quote_fallback()
+                    or self._apply_alpha_vantage_global_quote()
                 ):
                     current_price = self._to_float(
                         self.data["price"].get("current_price")
@@ -1250,8 +1323,14 @@ class StockResearchEngine:
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
 
+            if not self.data["capital_flow"].get("market_flow_details"):
+                self.data["capital_flow"].update(self._get_market_flow_analysis())
+
             has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            if not has_profile or self.data["capital_flow"].get("market_cap") == "N/A":
+            if (
+                not has_profile
+                or self.data["capital_flow"].get("market_cap") == "N/A"
+            ):
                 self._apply_alpha_vantage_overview()
 
             # 3. Real institutional holders (Yahoo Finance first, Alpha Vantage fallback)

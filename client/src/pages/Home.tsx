@@ -21,6 +21,7 @@ import {
   ArrowLeftRight,
   Wallet,
   Globe,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -133,6 +134,7 @@ interface CapitalFlow {
     large_cap: string;
     small_cap: string;
   };
+  market_flow_source?: string;
   market_flow_details?: FlowDetail[];
   sector_flow_details?: FlowDetail[];
   flow_destination_summary?: FlowDestinationSummary;
@@ -289,6 +291,24 @@ export default function Home() {
     setData(item.data);
   };
 
+  const deleteHistoryItem = (itemId: string) => {
+    setHistory(prev => prev.filter(item => item.id !== itemId));
+    setCompareIds(prev => prev.filter(id => id !== itemId));
+    if (selectedHistoryId === itemId) {
+      setSelectedHistoryId(null);
+      setData(null);
+    }
+    toast.success("已删除这条搜索记录");
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    setCompareIds([]);
+    setSelectedHistoryId(null);
+    setData(null);
+    toast.success("已清空搜索记录");
+  };
+
   const exportReport = () => {
     window.print();
   };
@@ -317,6 +337,11 @@ export default function Home() {
     if (typeof value !== "number" || isNaN(value)) return value ?? "N/A";
     return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
   };
+
+  const hasFlowMetric = (item: FlowDetail) =>
+    typeof item.change_percent === "number" ||
+    typeof item.volume_ratio === "number" ||
+    typeof item.signed_flow_proxy_usd === "number";
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 print:p-0 print:bg-white">
@@ -763,17 +788,21 @@ export default function Home() {
 
                 {/* Capital Flow Analysis Section */}
                 <Card className="shadow-sm border-slate-200 overflow-hidden">
-                  <CardHeader className="bg-slate-950 text-white border-b">
+                  <CardHeader className="bg-white border-b border-slate-100">
                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                       <div>
-                        <CardTitle className="text-lg font-bold flex items-center gap-2">
-                          <Wallet className="text-blue-300" />
+                        <CardTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                          <Wallet className="text-blue-600" />
                           市场资金活跃度拆解
                         </CardTitle>
+                        <p className="mt-1 text-xs text-slate-500">
+                          ETF 活跃度数据源：
+                          {data.capital_flow.market_flow_source ?? "N/A"}
+                        </p>
                       </div>
                       <Badge
                         variant="outline"
-                        className="border-blue-300/40 bg-blue-400/10 text-blue-100 w-fit"
+                        className="border-blue-200 bg-blue-50 text-blue-700 w-fit"
                       >
                         {data.capital_flow.estimated_flow_intensity}
                       </Badge>
@@ -815,6 +844,36 @@ export default function Home() {
                         </p>
                         <p className="text-xs text-slate-500 mt-2">
                           成交量 × 股价
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+                        <p className="text-xs font-bold text-emerald-700 uppercase tracking-wider mb-1">
+                          最强流入板块
+                        </p>
+                        <p className="text-sm font-black text-emerald-950">
+                          {data.capital_flow.flow_destination_summary
+                            ?.top_inflow ?? "N/A"}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-rose-100 bg-rose-50/70 p-4">
+                        <p className="text-xs font-bold text-rose-700 uppercase tracking-wider mb-1">
+                          最强流出板块
+                        </p>
+                        <p className="text-sm font-black text-rose-950">
+                          {data.capital_flow.flow_destination_summary
+                            ?.top_outflow ?? "N/A"}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                          风险偏好
+                        </p>
+                        <p className="text-sm font-black text-slate-900">
+                          {data.capital_flow.flow_destination_summary
+                            ?.risk_appetite ?? "N/A"}
                         </p>
                       </div>
                     </div>
@@ -1066,42 +1125,50 @@ export default function Home() {
                           大盘成交活跃度
                         </h4>
                         <div className="space-y-3">
-                          {(data.capital_flow.market_flow_details ?? []).map(
-                            item => (
-                              <div
-                                key={item.symbol}
-                                className="rounded-xl border border-slate-200 bg-white p-4"
-                              >
-                                <div className="flex items-start justify-between gap-3 mb-3">
-                                  <div>
-                                    <p className="font-black text-slate-900">
-                                      {item.symbol}
-                                    </p>
-                                    <p className="text-xs text-slate-500">
-                                      {item.label}
-                                    </p>
+                          {(data.capital_flow.market_flow_details ?? []).filter(
+                            hasFlowMetric
+                          ).length > 0 ? (
+                            (data.capital_flow.market_flow_details ?? [])
+                              .filter(hasFlowMetric)
+                              .map(item => (
+                                <div
+                                  key={item.symbol}
+                                  className="rounded-xl border border-slate-200 bg-white p-4"
+                                >
+                                  <div className="flex items-start justify-between gap-3 mb-3">
+                                    <div>
+                                      <p className="font-black text-slate-900">
+                                        {item.symbol}
+                                      </p>
+                                      <p className="text-xs text-slate-500">
+                                        {item.label}
+                                      </p>
+                                    </div>
+                                    <Badge
+                                      className={getDirectionColor(
+                                        item.direction
+                                      )}
+                                    >
+                                      {item.direction}
+                                    </Badge>
                                   </div>
-                                  <Badge
-                                    className={getDirectionColor(
-                                      item.direction
-                                    )}
-                                  >
-                                    {item.direction}
-                                  </Badge>
+                                  <div className="grid grid-cols-3 gap-2 text-xs font-semibold text-slate-600">
+                                    <span>
+                                      {formatPercent(item.change_percent)}
+                                    </span>
+                                    <span>{item.volume_ratio}x 成交量</span>
+                                    <span>
+                                      {formatLargeNumber(
+                                        item.signed_flow_proxy_usd
+                                      )}
+                                    </span>
+                                  </div>
                                 </div>
-                                <div className="grid grid-cols-3 gap-2 text-xs font-semibold text-slate-600">
-                                  <span>
-                                    {formatPercent(item.change_percent)}
-                                  </span>
-                                  <span>{item.volume_ratio}x 成交量</span>
-                                  <span>
-                                    {formatLargeNumber(
-                                      item.signed_flow_proxy_usd
-                                    )}
-                                  </span>
-                                </div>
-                              </div>
-                            )
+                              ))
+                          ) : (
+                            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                              当前 ETF 活跃度 API 暂未返回可用数据，请稍后重试。
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1112,40 +1179,49 @@ export default function Home() {
                           板块成交活跃度
                         </h4>
                         <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1">
-                          {(data.capital_flow.sector_flow_details ?? []).map(
-                            item => (
-                              <div
-                                key={item.symbol}
-                                className="rounded-xl border border-slate-200 bg-white p-4"
-                              >
-                                <div className="flex items-start justify-between gap-3 mb-3">
-                                  <div>
-                                    <p className="font-black text-slate-900">
-                                      {item.symbol}
-                                    </p>
-                                    <p className="text-xs text-slate-500">
-                                      {item.label}
-                                    </p>
+                          {(data.capital_flow.sector_flow_details ?? []).filter(
+                            hasFlowMetric
+                          ).length > 0 ? (
+                            (data.capital_flow.sector_flow_details ?? [])
+                              .filter(hasFlowMetric)
+                              .map(item => (
+                                <div
+                                  key={item.symbol}
+                                  className="rounded-xl border border-slate-200 bg-white p-4"
+                                >
+                                  <div className="flex items-start justify-between gap-3 mb-3">
+                                    <div>
+                                      <p className="font-black text-slate-900">
+                                        {item.symbol}
+                                      </p>
+                                      <p className="text-xs text-slate-500">
+                                        {item.label}
+                                      </p>
+                                    </div>
+                                    <Badge
+                                      className={getFlowColor(item.intensity)}
+                                    >
+                                      {item.intensity}
+                                    </Badge>
                                   </div>
-                                  <Badge
-                                    className={getFlowColor(item.intensity)}
-                                  >
-                                    {item.intensity}
-                                  </Badge>
+                                  <div className="grid grid-cols-3 gap-2 text-xs font-semibold text-slate-600">
+                                    <span>
+                                      {formatPercent(item.change_percent)}
+                                    </span>
+                                    <span>{item.volume_ratio}x 成交量</span>
+                                    <span>
+                                      {formatLargeNumber(
+                                        item.signed_flow_proxy_usd
+                                      )}
+                                    </span>
+                                  </div>
                                 </div>
-                                <div className="grid grid-cols-3 gap-2 text-xs font-semibold text-slate-600">
-                                  <span>
-                                    {formatPercent(item.change_percent)}
-                                  </span>
-                                  <span>{item.volume_ratio}x 成交量</span>
-                                  <span>
-                                    {formatLargeNumber(
-                                      item.signed_flow_proxy_usd
-                                    )}
-                                  </span>
-                                </div>
-                              </div>
-                            )
+                              ))
+                          ) : (
+                            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+                              当前板块 ETF 活跃度 API
+                              暂未返回可用数据，请稍后重试。
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1281,10 +1357,23 @@ export default function Home() {
           <div className="print:hidden">
             <Card className="sticky top-8 shadow-sm border-slate-200">
               <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                  <Clock size={16} className="text-blue-600" />
-                  最近搜索
-                </CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                    <Clock size={16} className="text-blue-600" />
+                    最近搜索
+                  </CardTitle>
+                  {history.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearHistory}
+                      className="h-7 px-2 text-xs text-slate-400 hover:text-rose-600"
+                    >
+                      清空
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="px-2">
                 {history.length === 0 ? (
@@ -1301,28 +1390,38 @@ export default function Home() {
                           key={item.id}
                           className={`rounded-xl transition-all ${isSelected ? "bg-blue-50 border border-blue-100" : "border border-transparent hover:bg-slate-100"}`}
                         >
-                          <button
-                            onClick={() => openHistoryItem(item)}
-                            className="w-full flex items-center justify-between p-3 group"
-                          >
-                            <div className="text-left">
-                              <p className="font-bold text-slate-900">
-                                {item.ticker}
-                              </p>
-                              <p className="text-[10px] text-slate-400">
-                                {item.timestamp}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-bold text-slate-900">
-                                ${item.price ? item.price.toFixed(2) : "0.00"}
-                              </p>
-                              <ArrowLeftRight
-                                size={14}
-                                className="ml-auto text-slate-300 group-hover:text-blue-500"
-                              />
-                            </div>
-                          </button>
+                          <div className="flex items-stretch gap-1 p-1">
+                            <button
+                              onClick={() => openHistoryItem(item)}
+                              className="min-w-0 flex-1 flex items-center justify-between rounded-lg p-2 text-left group hover:bg-white/70"
+                            >
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-900 truncate">
+                                  {item.ticker}
+                                </p>
+                                <p className="text-[10px] text-slate-400 truncate">
+                                  {item.timestamp}
+                                </p>
+                              </div>
+                              <div className="text-right pl-2">
+                                <p className="font-bold text-slate-900">
+                                  ${item.price ? item.price.toFixed(2) : "0.00"}
+                                </p>
+                                <ArrowLeftRight
+                                  size={14}
+                                  className="ml-auto text-slate-300 group-hover:text-blue-500"
+                                />
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`删除 ${item.ticker} 搜索记录`}
+                              onClick={() => deleteHistoryItem(item.id)}
+                              className="my-2 rounded-lg px-2 text-slate-300 hover:bg-rose-50 hover:text-rose-600"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
                           <button
                             onClick={() => toggleCompareItem(item.id)}
                             className={`mx-3 mb-3 w-[calc(100%-1.5rem)] rounded-lg border px-2 py-1 text-xs font-bold transition-colors ${isComparing ? "border-blue-200 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-500 hover:text-blue-600"}`}
