@@ -42,7 +42,7 @@ interface NewsItem {
   publisher: string;
   link: string;
   provider_publish_time: string;
-  sentiment: "Positive" | "Negative" | "Neutral";
+  sentiment: "Positive" | "Negative" | "Neutral" | "中性" | string;
 }
 
 interface HistoricalTrend {
@@ -180,6 +180,7 @@ interface StockData {
   capital_flow: CapitalFlow;
   news: NewsItem[];
   checklists: ChecklistItem[];
+  diagnostics?: string[];
 }
 
 interface HistoryItem {
@@ -195,6 +196,20 @@ interface StockResearchError {
   details?: string;
   diagnostics?: string[];
 }
+
+const isStockDataPayload = (value: unknown): value is StockData => {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Partial<StockData>;
+  return (
+    typeof payload.ticker === "string" &&
+    Boolean(payload.ticker) &&
+    Boolean(payload.price) &&
+    typeof payload.price?.current_price === "number" &&
+    Boolean(payload.capital_flow) &&
+    Array.isArray(payload.news) &&
+    Array.isArray(payload.checklists)
+  );
+};
 
 const HISTORY_STORAGE_KEY = "stock_research_history_v10";
 
@@ -256,7 +271,11 @@ export default function Home() {
         }
         throw new Error(message);
       }
-      const result = await response.json();
+      const result: unknown = await response.json();
+      if (!isStockDataPayload(result)) {
+        throw new Error("API 返回的数据结构不完整，请稍后重试。");
+      }
+
       setData(result);
       const newItem: HistoryItem = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -795,10 +814,6 @@ export default function Home() {
                           <Wallet className="text-blue-600" />
                           市场资金活跃度拆解
                         </CardTitle>
-                        <p className="mt-1 text-xs text-slate-500">
-                          ETF 活跃度数据源：
-                          {data.capital_flow.market_flow_source ?? "N/A"}
-                        </p>
                       </div>
                       <Badge
                         variant="outline"
