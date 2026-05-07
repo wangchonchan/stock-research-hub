@@ -201,6 +201,10 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<StockData | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(
+    null
+  );
+  const [compareIds, setCompareIds] = useState<string[]>([]);
   const reportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -216,7 +220,12 @@ export default function Home() {
 
   useEffect(() => {
     localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+    setCompareIds(prev =>
+      prev.filter(id => history.some(item => item.id === id))
+    );
   }, [history]);
+
+  const compareItems = history.filter(item => compareIds.includes(item.id));
 
   const formatLargeNumber = (num: number | string) => {
     if (typeof num !== "number" || isNaN(num)) return num;
@@ -248,7 +257,7 @@ export default function Home() {
       const result = await response.json();
       setData(result);
       const newItem: HistoryItem = {
-        id: Date.now().toString(),
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         ticker: result.ticker,
         timestamp: new Date().toLocaleString("zh-CN", {
           timeZone: "Asia/Hong_Kong",
@@ -256,9 +265,8 @@ export default function Home() {
         price: result.price.current_price,
         data: result,
       };
-      setHistory(prev =>
-        [newItem, ...prev.filter(h => h.ticker !== result.ticker)].slice(0, 20)
-      );
+      setSelectedHistoryId(newItem.id);
+      setHistory(prev => [newItem, ...prev].slice(0, 20));
       toast.success(`已更新 ${searchTicker.toUpperCase()} 的研究数据`);
     } catch (error) {
       console.error(error);
@@ -267,6 +275,18 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleCompareItem = (itemId: string) => {
+    setCompareIds(prev => {
+      if (prev.includes(itemId)) return prev.filter(id => id !== itemId);
+      return [itemId, ...prev].slice(0, 3);
+    });
+  };
+
+  const openHistoryItem = (item: HistoryItem) => {
+    setSelectedHistoryId(item.id);
+    setData(item.data);
   };
 
   const exportReport = () => {
@@ -647,6 +667,99 @@ export default function Home() {
                     </CardContent>
                   </Card>
                 </div>
+
+                {compareItems.length >= 2 && (
+                  <Card className="shadow-sm border-slate-200 overflow-hidden print:hidden">
+                    <CardHeader className="bg-white border-b">
+                      <CardTitle className="text-lg font-bold flex items-center gap-2">
+                        <ArrowLeftRight className="text-blue-600" />
+                        搜索记录对比
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-6 overflow-x-auto">
+                      <div
+                        className="grid gap-4"
+                        style={{
+                          gridTemplateColumns: `repeat(${compareItems.length}, minmax(220px, 1fr))`,
+                        }}
+                      >
+                        {compareItems.map(item => (
+                          <div
+                            key={item.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                          >
+                            <div className="flex items-start justify-between gap-2 mb-4">
+                              <div>
+                                <p className="text-2xl font-black text-slate-900">
+                                  {item.ticker}
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                  {item.timestamp}
+                                </p>
+                              </div>
+                              <Badge variant="outline">
+                                ${item.price ? item.price.toFixed(2) : "0.00"}
+                              </Badge>
+                            </div>
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">涨跌幅</span>
+                                <span
+                                  className={
+                                    item.data.price.change_percent >= 0
+                                      ? "font-bold text-emerald-600"
+                                      : "font-bold text-rose-600"
+                                  }
+                                >
+                                  {formatPercent(
+                                    item.data.price.change_percent
+                                  )}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">PE</span>
+                                <span className="font-bold text-slate-900">
+                                  {item.data.price.pe_ratio}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">PB</span>
+                                <span className="font-bold text-slate-900">
+                                  {item.data.price.pb_ratio}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">营收 YoY</span>
+                                <span className="font-bold text-slate-900">
+                                  {typeof item.data.fundamentals.revenue_yoy ===
+                                  "number"
+                                    ? formatPercent(
+                                        item.data.fundamentals.revenue_yoy
+                                      )
+                                    : item.data.fundamentals.revenue_yoy}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">
+                                  成交量比率
+                                </span>
+                                <span className="font-bold text-slate-900">
+                                  {item.data.capital_flow.volume_ratio}x
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">RSI</span>
+                                <span className="font-bold text-slate-900">
+                                  {item.data.technicals.rsi}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* Capital Flow Analysis Section */}
                 <Card className="shadow-sm border-slate-200 overflow-hidden">
@@ -1180,31 +1293,45 @@ export default function Home() {
                   </p>
                 ) : (
                   <div className="space-y-1">
-                    {history.map(item => (
-                      <button
-                        key={item.id}
-                        onClick={() => setData(item.data)}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl transition-all hover:bg-slate-100 group ${data?.ticker === item.ticker ? "bg-blue-50 border-blue-100" : ""}`}
-                      >
-                        <div className="text-left">
-                          <p className="font-bold text-slate-900">
-                            {item.ticker}
-                          </p>
-                          <p className="text-[10px] text-slate-400">
-                            {item.timestamp}
-                          </p>
+                    {history.map(item => {
+                      const isSelected = selectedHistoryId === item.id;
+                      const isComparing = compareIds.includes(item.id);
+                      return (
+                        <div
+                          key={item.id}
+                          className={`rounded-xl transition-all ${isSelected ? "bg-blue-50 border border-blue-100" : "border border-transparent hover:bg-slate-100"}`}
+                        >
+                          <button
+                            onClick={() => openHistoryItem(item)}
+                            className="w-full flex items-center justify-between p-3 group"
+                          >
+                            <div className="text-left">
+                              <p className="font-bold text-slate-900">
+                                {item.ticker}
+                              </p>
+                              <p className="text-[10px] text-slate-400">
+                                {item.timestamp}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-slate-900">
+                                ${item.price ? item.price.toFixed(2) : "0.00"}
+                              </p>
+                              <ArrowLeftRight
+                                size={14}
+                                className="ml-auto text-slate-300 group-hover:text-blue-500"
+                              />
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => toggleCompareItem(item.id)}
+                            className={`mx-3 mb-3 w-[calc(100%-1.5rem)] rounded-lg border px-2 py-1 text-xs font-bold transition-colors ${isComparing ? "border-blue-200 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-500 hover:text-blue-600"}`}
+                          >
+                            {isComparing ? "已加入对比" : "加入对比"}
+                          </button>
                         </div>
-                        <div className="text-right">
-                          <p className="font-bold text-slate-900">
-                            ${item.price ? item.price.toFixed(2) : "0.00"}
-                          </p>
-                          <ArrowLeftRight
-                            size={14}
-                            className="ml-auto text-slate-300 group-hover:text-blue-500"
-                          />
-                        </div>
-                      </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
