@@ -1,11 +1,7 @@
 import express, { type Express } from "express";
 import { createServer } from "http";
 import path from "path";
-import { fileURLToPath } from "url";
 import { spawn } from "child_process";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 interface ResearchResult {
   ticker?: string;
@@ -19,24 +15,39 @@ interface ResearchResult {
 const PYTHON_BIN = process.env.PYTHON_BIN || process.env.PYTHON || "python3";
 
 function extractLastJsonObject(output: string): string | null {
-  const end = output.lastIndexOf("}");
+  const trimmedOutput = output.trimEnd();
+  const end = trimmedOutput.lastIndexOf("}");
   if (end === -1) return null;
 
+  // The Python engine can emit warnings before the payload, and the payload is
+  // deeply nested. Walking backward from the final brace returns the innermost
+  // valid object first, so scan forward and keep the largest valid object that
+  // ends at the final brace.
   for (
-    let start = output.lastIndexOf("{", end);
+    let start = trimmedOutput.indexOf("{");
     start !== -1;
-    start = output.lastIndexOf("{", start - 1)
+    start = trimmedOutput.indexOf("{", start + 1)
   ) {
-    const candidate = output.slice(start, end + 1);
+    const candidate = trimmedOutput.slice(start, end + 1);
     try {
       JSON.parse(candidate);
       return candidate;
     } catch {
-      // Keep walking backwards until we find the root JSON object.
+      // Keep scanning until we find the root JSON object.
     }
   }
 
   return null;
+}
+
+function isResearchResultPayload(value: unknown): value is ResearchResult {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as ResearchResult;
+  return (
+    typeof payload.ticker === "string" &&
+    Boolean(payload.ticker) &&
+    typeof payload.price?.current_price === "number"
+  );
 }
 
 async function setupFrontend(app: Express, staticPath: string) {
@@ -162,7 +173,12 @@ async function startServer() {
           throw new Error("No JSON found in output");
         }
 
-        const result = JSON.parse(jsonPayload) as ResearchResult;
+        const parsedPayload: unknown = JSON.parse(jsonPayload);
+        if (!isResearchResultPayload(parsedPayload)) {
+          throw new Error("Research engine returned an incomplete payload");
+        }
+
+        const result = parsedPayload;
         const diagnostics = result.diagnostics ?? [];
         const hasPrice =
           typeof result.price?.current_price === "number" &&
