@@ -37,18 +37,6 @@ function extractLastJsonObject(output: string): string | null {
   return null;
 }
 
-function hasUsableResearchData(result: ResearchResult): boolean {
-  const hasPrice =
-    typeof result.price?.current_price === "number" &&
-    result.price.current_price > 0;
-  const hasProfile = Boolean(
-    result.company_name &&
-      result.company_name !== "N/A" &&
-      result.company_name !== result.ticker
-  );
-  return hasPrice || hasProfile;
-}
-
 async function setupFrontend(app: Express, staticPath: string) {
   if (process.env.NODE_ENV === "production") {
     app.use(express.static(staticPath));
@@ -150,20 +138,24 @@ async function startServer() {
         }
 
         const result = JSON.parse(jsonPayload) as ResearchResult;
-        if (!hasUsableResearchData(result)) {
-          const diagnostics = result.diagnostics ?? [];
-          console.error(
-            `Research engine returned no usable data for ${ticker}: ${diagnostics.join("; ")}`
+        const diagnostics = result.diagnostics ?? [];
+        const hasPrice =
+          typeof result.price?.current_price === "number" &&
+          result.price.current_price > 0;
+        const hasProfile = Boolean(
+          result.company_name &&
+            result.company_name !== "N/A" &&
+            result.company_name !== result.ticker
+        );
+        if (!hasPrice && !hasProfile) {
+          console.warn(
+            `Research engine returned partial/empty data for ${ticker}: ${diagnostics.join("; ")}`
           );
-          return res.status(502).json({
-            error: "No usable stock data returned",
-            details:
-              diagnostics[0] ??
-              "The upstream finance data provider returned an empty response.",
-            diagnostics,
-          });
         }
 
+        // Do not fail the search just because an upstream data provider returned
+        // partial data. The UI can still render the report shell and diagnostics,
+        // which keeps the core search flow responsive.
         res.json(result);
       } catch (err) {
         console.error(
