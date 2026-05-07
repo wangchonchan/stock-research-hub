@@ -692,6 +692,90 @@ class StockResearchEngine:
             self.data["diagnostics"].append(f"yahoo_quote_summary_unavailable: {e}")
             return False
 
+    def _apply_yahoo_quote_lookup(self, current_price: float = 0) -> bool:
+        """Fallback profile/quote fetch using Yahoo endpoints that do not need quoteSummary modules."""
+        did_update = False
+
+        try:
+            payload = self._request_get(
+                "https://query1.finance.yahoo.com/v7/finance/quote",
+                params={"symbols": self.ticker, "formatted": "false"},
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://finance.yahoo.com/",
+                },
+            ).json()
+            quote = ((payload.get("quoteResponse") or {}).get("result") or [None])[0]
+            if quote:
+                name = quote.get("longName") or quote.get("shortName")
+                if name:
+                    self.data["company_name"] = name
+                    did_update = True
+
+                quote_price = self._to_float(quote.get("regularMarketPrice"))
+                if quote_price > 0:
+                    current_price = quote_price
+                    self.data["price"]["current_price"] = round(quote_price, 3)
+                    self.data["price"]["change"] = round(
+                        self._to_float(quote.get("regularMarketChange")), 3
+                    )
+                    self.data["price"]["change_percent"] = round(
+                        self._to_float(quote.get("regularMarketChangePercent")), 2
+                    )
+                    did_update = True
+
+                pe_ratio = self._to_float(
+                    quote.get("trailingPE"), self._to_float(quote.get("forwardPE"))
+                )
+                pb_ratio = self._to_float(quote.get("priceToBook"))
+                if pe_ratio > 0:
+                    self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
+                    did_update = True
+                if pb_ratio > 0:
+                    self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+                    did_update = True
+
+                market_cap = self._to_float(quote.get("marketCap"))
+                volume = self._to_float(quote.get("regularMarketVolume"))
+                avg_vol = self._to_float(
+                    quote.get("averageDailyVolume10Day"),
+                    self._to_float(quote.get("averageDailyVolume3Month")),
+                )
+                if market_cap > 0 or volume > 0 or avg_vol > 0:
+                    self._update_capital_flow_snapshot(
+                        market_cap, volume, avg_vol, current_price
+                    )
+                    did_update = True
+        except Exception as e:
+            self.data["diagnostics"].append(f"yahoo_quote_lookup_unavailable: {e}")
+
+        if self.data["company_name"] in ("N/A", self.ticker):
+            try:
+                payload = self._request_get(
+                    "https://query1.finance.yahoo.com/v1/finance/search",
+                    params={"q": self.ticker, "quotesCount": 1, "newsCount": 0},
+                    headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json,text/plain,*/*",
+                        "Referer": "https://finance.yahoo.com/",
+                    },
+                ).json()
+                quote = (payload.get("quotes") or [None])[0]
+                if quote:
+                    name = quote.get("longname") or quote.get("shortname")
+                    if name:
+                        self.data["company_name"] = name
+                        did_update = True
+            except Exception as e:
+                self.data["diagnostics"].append(f"yahoo_search_unavailable: {e}")
+
+        if did_update:
+            self.data["diagnostics"].append(
+                "profile_source: Yahoo quote/search fallback"
+            )
+        return did_update
+
     def _market_bucket(self, market_cap: float) -> str:
         if market_cap >= 200_000_000_000:
             return "特大盘 (Mega Cap)"
@@ -1597,7 +1681,9 @@ class StockResearchEngine:
             try:
                 info = t.info
                 if info:
-                    self.data["company_name"] = info.get("longName", self.ticker)
+                    company_name = info.get("longName") or info.get("shortName")
+                    if company_name:
+                        self.data["company_name"] = company_name
                     raw_desc = info.get("longBusinessSummary", "N/A")
                     self.data["description"] = self._summarize_description(raw_desc, 30)
 
@@ -1654,6 +1740,17 @@ class StockResearchEngine:
             )
             if missing_profile_fields:
                 self._apply_yahoo_quote_summary(current_price)
+                current_price = self._to_float(self.data["price"].get("current_price"))
+
+            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
+            missing_profile_fields = (
+                not has_profile
+                or self.data["capital_flow"].get("market_cap") == "N/A"
+                or self.data["price"].get("pe_ratio") == "N/A"
+                or self.data["price"].get("pb_ratio") == "N/A"
+            )
+            if missing_profile_fields:
+                self._apply_yahoo_quote_lookup(current_price)
                 current_price = self._to_float(self.data["price"].get("current_price"))
 
             has_profile = self.data["company_name"] not in ("N/A", self.ticker)
