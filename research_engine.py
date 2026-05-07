@@ -350,9 +350,7 @@ class StockResearchEngine:
                     "current_price": round(close, 3),
                     "change": round(change, 3),
                     "change_percent": (
-                        round((change / open_price) * 100, 2)
-                        if open_price
-                        else 0
+                        round((change / open_price) * 100, 2) if open_price else 0
                     ),
                 }
             )
@@ -399,6 +397,439 @@ class StockResearchEngine:
         frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
         frame = frame.dropna(subset=["Date", "Close"]).set_index("Date")
         return frame.tail(days)
+
+    def _normalize_history_frame(
+        self, frame: pd.DataFrame, days: int = 260
+    ) -> pd.DataFrame:
+        if frame is None or frame.empty:
+            return pd.DataFrame()
+
+        normalized = frame.copy()
+        if isinstance(normalized.columns, pd.MultiIndex):
+            normalized.columns = [str(col[-1]) for col in normalized.columns]
+
+        rename_map = {
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        }
+        normalized = normalized.rename(
+            columns={
+                col: rename_map.get(str(col).lower(), col) for col in normalized.columns
+            }
+        )
+        required = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(col in normalized.columns for col in required):
+            return pd.DataFrame()
+
+        for col in required:
+            normalized[col] = pd.to_numeric(normalized[col], errors="coerce")
+        normalized = normalized.dropna(subset=["Close"]).sort_index()
+        return normalized.tail(days)
+
+    def _fetch_yahoo_chart_history(self, symbol: str, days: int = 260) -> pd.DataFrame:
+        try:
+            payload = self._request_get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+                params={
+                    "range": "1y",
+                    "interval": "1d",
+                    "includePrePost": "false",
+                    "events": "div,splits",
+                },
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://finance.yahoo.com/",
+                },
+            ).json()
+            result = (payload.get("chart", {}).get("result") or [None])[0]
+            if not result:
+                error = payload.get("chart", {}).get("error")
+                if error:
+                    self.data["diagnostics"].append(f"yahoo_chart_unavailable: {error}")
+                return pd.DataFrame()
+
+            timestamps = result.get("timestamp") or []
+            quote = ((result.get("indicators", {}).get("quote") or [None])[0]) or {}
+            if not timestamps or not quote:
+                return pd.DataFrame()
+
+            frame = pd.DataFrame(
+                {
+                    "Date": pd.to_datetime(timestamps, unit="s", errors="coerce"),
+                    "Open": quote.get("open", []),
+                    "High": quote.get("high", []),
+                    "Low": quote.get("low", []),
+                    "Close": quote.get("close", []),
+                    "Volume": quote.get("volume", []),
+                }
+            )
+            frame = frame.dropna(subset=["Date"]).set_index("Date")
+            return self._normalize_history_frame(frame, days)
+        except Exception as e:
+            self.data["diagnostics"].append(f"yahoo_chart_unavailable: {e}")
+            return pd.DataFrame()
+
+    def _fetch_alpha_vantage_daily_history(self, days: int = 260) -> pd.DataFrame:
+        api_key = self._get_alpha_vantage_key()
+        if not api_key:
+            return pd.DataFrame()
+
+        try:
+            payload = self._request_get(
+                "https://www.alphavantage.co/query",
+                params={
+                    "function": "TIME_SERIES_DAILY_ADJUSTED",
+                    "symbol": self.ticker,
+                    "outputsize": "compact",
+                    "apikey": api_key,
+                },
+            ).json()
+            series = payload.get("Time Series (Daily)") or {}
+            if not series:
+                message = (
+                    payload.get("Information")
+                    or payload.get("Note")
+                    or payload.get("Error Message")
+                )
+                if message:
+                    self.data["diagnostics"].append(
+                        f"alpha_vantage_daily_unavailable: {message}"
+                    )
+                return pd.DataFrame()
+
+            records = []
+            for date, row in series.items():
+                records.append(
+                    {
+                        "Date": date,
+                        "Open": row.get("1. open"),
+                        "High": row.get("2. high"),
+                        "Low": row.get("3. low"),
+                        "Close": row.get("4. close"),
+                        "Volume": row.get("6. volume"),
+                    }
+                )
+            frame = pd.DataFrame(records)
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+            frame = frame.dropna(subset=["Date"]).set_index("Date")
+            return self._normalize_history_frame(frame, days)
+        except Exception as e:
+            self.data["diagnostics"].append(f"alpha_vantage_daily_unavailable: {e}")
+            return pd.DataFrame()
+
+    def _fetch_price_history(self, ticker_obj) -> tuple[pd.DataFrame, str]:
+        attempts = [
+            (
+                "Yahoo Finance yfinance history 1y",
+                lambda: ticker_obj.history(period="1y"),
+            ),
+            (
+                "Yahoo Finance yfinance history 1mo",
+                lambda: ticker_obj.history(period="1mo"),
+            ),
+            (
+                "Yahoo Finance yfinance history 5d",
+                lambda: ticker_obj.history(period="5d"),
+            ),
+            (
+                "Yahoo Finance chart API",
+                lambda: self._fetch_yahoo_chart_history(self.ticker),
+            ),
+            (
+                "Stooq delayed daily CSV",
+                lambda: self._fetch_stooq_history(self.ticker, days=260),
+            ),
+            (
+                "Alpha Vantage TIME_SERIES_DAILY_ADJUSTED",
+                lambda: self._fetch_alpha_vantage_daily_history(days=260),
+            ),
+        ]
+
+        for source, fetcher in attempts:
+            try:
+                hist = self._normalize_history_frame(fetcher())
+                if not hist.empty:
+                    return hist, source
+            except Exception as e:
+                self.data["diagnostics"].append(
+                    f"price_history_attempt_failed: {source}: {e}"
+                )
+
+        return pd.DataFrame(), "N/A"
+
+    def _apply_price_history(self, hist: pd.DataFrame, source: str) -> float:
+        if hist is None or hist.empty:
+            return 0
+
+        current_price = float(hist["Close"].iloc[-1])
+        prev_close = float(hist["Close"].iloc[-2]) if len(hist) > 1 else current_price
+        change = current_price - prev_close
+        self.data["price"].update(
+            {
+                "current_price": round(current_price, 3),
+                "change": round(change, 3),
+                "change_percent": (
+                    round((change / prev_close) * 100, 2) if prev_close else 0
+                ),
+            }
+        )
+        self.data["technicals"].update(self._calculate_indicators(hist))
+
+        volume = self._to_float(hist["Volume"].iloc[-1]) if "Volume" in hist else 0
+        avg_volume = (
+            float(hist["Volume"].tail(10).mean())
+            if "Volume" in hist and len(hist["Volume"].dropna()) > 0
+            else 0
+        )
+        if volume > 0:
+            self.data["capital_flow"]["volume"] = volume
+            self.data["capital_flow"]["net_flow_proxy_usd"] = round(
+                volume * current_price, 2
+            )
+        if avg_volume > 0:
+            self.data["capital_flow"]["avg_volume_10d"] = avg_volume
+            self.data["capital_flow"]["volume_ratio"] = round(volume / avg_volume, 2)
+        self.data["diagnostics"].append(f"price_history_source: {source}")
+        return current_price
+
+    def _raw_value(self, value, default="N/A"):
+        if isinstance(value, dict):
+            return value.get("raw", value.get("fmt", default))
+        return default if value in (None, "") else value
+
+    def _apply_yahoo_quote_summary(self, current_price: float = 0) -> bool:
+        try:
+            modules = ",".join(
+                [
+                    "price",
+                    "summaryProfile",
+                    "defaultKeyStatistics",
+                    "financialData",
+                    "summaryDetail",
+                ]
+            )
+            payload = self._request_get(
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
+                params={"modules": modules, "formatted": "false"},
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://finance.yahoo.com/",
+                },
+            ).json()
+            result = (payload.get("quoteSummary", {}).get("result") or [None])[0]
+            if not result:
+                error = payload.get("quoteSummary", {}).get("error")
+                if error:
+                    self.data["diagnostics"].append(
+                        f"yahoo_quote_summary_unavailable: {error}"
+                    )
+                return False
+
+            price = result.get("price") or {}
+            profile = result.get("summaryProfile") or {}
+            stats = result.get("defaultKeyStatistics") or {}
+            financial = result.get("financialData") or {}
+            detail = result.get("summaryDetail") or {}
+
+            self.data["company_name"] = self._raw_value(
+                price.get("longName"), self.data["company_name"]
+            )
+            if self.data["company_name"] in ("N/A", self.ticker):
+                self.data["company_name"] = self._raw_value(
+                    price.get("shortName"), self.ticker
+                )
+            description = self._raw_value(
+                profile.get("longBusinessSummary"), self.data["description"]
+            )
+            self.data["description"] = self._summarize_description(description, 30)
+
+            quote_price = self._to_float(price.get("regularMarketPrice"))
+            if quote_price > 0:
+                current_price = quote_price
+                self.data["price"]["current_price"] = round(quote_price, 3)
+                change = self._to_float(price.get("regularMarketChange"))
+                change_pct = self._to_float(price.get("regularMarketChangePercent"))
+                self.data["price"]["change"] = round(change, 3)
+                self.data["price"]["change_percent"] = round(change_pct, 2)
+
+            pe_ratio = self._to_float(detail.get("trailingPE"))
+            pb_ratio = self._to_float(stats.get("priceToBook"))
+            if pe_ratio > 0:
+                self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
+            if pb_ratio > 0:
+                self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+
+            target = self._to_float(financial.get("targetMeanPrice"))
+            if target > 0:
+                self.data["consensus"]["target_price"] = round(target, 2)
+                if current_price > 0:
+                    self.data["consensus"]["upside_potential"] = round(
+                        ((target - current_price) / current_price) * 100, 1
+                    )
+            recommendation = self._raw_value(financial.get("recommendationKey"))
+            if recommendation != "N/A":
+                self.data["consensus"]["recommendation"] = str(recommendation).upper()
+
+            market_cap = self._to_float(price.get("marketCap"))
+            volume = self._to_float(price.get("regularMarketVolume"))
+            avg_vol = self._to_float(
+                price.get("averageDailyVolume10Day"),
+                self._to_float(price.get("averageDailyVolume3Month")),
+            )
+            if market_cap > 0 or volume > 0 or avg_vol > 0:
+                self._update_capital_flow_snapshot(
+                    market_cap, volume, avg_vol, current_price
+                )
+
+            self.data["diagnostics"].append("profile_source: Yahoo quoteSummary direct")
+            return True
+        except Exception as e:
+            self.data["diagnostics"].append(f"yahoo_quote_summary_unavailable: {e}")
+            return False
+
+    def _apply_yahoo_quote_lookup(self, current_price: float = 0) -> bool:
+        """Fallback profile/quote fetch using Yahoo endpoints that do not need quoteSummary modules."""
+        did_update = False
+
+        try:
+            payload = self._request_get(
+                "https://query1.finance.yahoo.com/v7/finance/quote",
+                params={"symbols": self.ticker, "formatted": "false"},
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://finance.yahoo.com/",
+                },
+            ).json()
+            quote = ((payload.get("quoteResponse") or {}).get("result") or [None])[0]
+            if quote:
+                name = quote.get("longName") or quote.get("shortName")
+                if name:
+                    self.data["company_name"] = name
+                    did_update = True
+
+                quote_price = self._to_float(quote.get("regularMarketPrice"))
+                if quote_price > 0:
+                    current_price = quote_price
+                    self.data["price"]["current_price"] = round(quote_price, 3)
+                    self.data["price"]["change"] = round(
+                        self._to_float(quote.get("regularMarketChange")), 3
+                    )
+                    self.data["price"]["change_percent"] = round(
+                        self._to_float(quote.get("regularMarketChangePercent")), 2
+                    )
+                    did_update = True
+
+                pe_ratio = self._to_float(
+                    quote.get("trailingPE"), self._to_float(quote.get("forwardPE"))
+                )
+                pb_ratio = self._to_float(quote.get("priceToBook"))
+                if pe_ratio > 0:
+                    self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
+                    did_update = True
+                if pb_ratio > 0:
+                    self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+                    did_update = True
+
+                market_cap = self._to_float(quote.get("marketCap"))
+                volume = self._to_float(quote.get("regularMarketVolume"))
+                avg_vol = self._to_float(
+                    quote.get("averageDailyVolume10Day"),
+                    self._to_float(quote.get("averageDailyVolume3Month")),
+                )
+                if market_cap > 0 or volume > 0 or avg_vol > 0:
+                    self._update_capital_flow_snapshot(
+                        market_cap, volume, avg_vol, current_price
+                    )
+                    did_update = True
+        except Exception as e:
+            self.data["diagnostics"].append(f"yahoo_quote_lookup_unavailable: {e}")
+
+        if self.data["company_name"] in ("N/A", self.ticker):
+            try:
+                payload = self._request_get(
+                    "https://query1.finance.yahoo.com/v1/finance/search",
+                    params={"q": self.ticker, "quotesCount": 1, "newsCount": 0},
+                    headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json,text/plain,*/*",
+                        "Referer": "https://finance.yahoo.com/",
+                    },
+                ).json()
+                quote = (payload.get("quotes") or [None])[0]
+                if quote:
+                    name = quote.get("longname") or quote.get("shortname")
+                    if name:
+                        self.data["company_name"] = name
+                        did_update = True
+            except Exception as e:
+                self.data["diagnostics"].append(f"yahoo_search_unavailable: {e}")
+
+        if did_update:
+            self.data["diagnostics"].append(
+                "profile_source: Yahoo quote/search fallback"
+            )
+        return did_update
+
+    def _market_bucket(self, market_cap: float) -> str:
+        if market_cap >= 200_000_000_000:
+            return "特大盘 (Mega Cap)"
+        if market_cap >= 10_000_000_000:
+            return "大盘 (Large Cap)"
+        if market_cap >= 2_000_000_000:
+            return "中盘 (Mid Cap)"
+        if market_cap > 0:
+            return "小盘 (Small Cap)"
+        return "N/A"
+
+    def _update_capital_flow_snapshot(
+        self, market_cap: float, volume: float, avg_vol: float, current_price: float
+    ) -> None:
+        ratio = (float(volume) / float(avg_vol)) if volume and avg_vol else None
+        intensity = "N/A"
+        if ratio is not None:
+            if ratio >= 1.5:
+                intensity = "强流入/强成交"
+            elif ratio >= 1.0:
+                intensity = "中性偏强"
+            else:
+                intensity = "偏弱"
+
+        net_flow_proxy = (
+            (float(volume) * current_price) if volume and current_price else "N/A"
+        )
+        self.data["capital_flow"].update(
+            {
+                "market_bucket": self._market_bucket(market_cap),
+                "market_cap": float(market_cap) if market_cap else "N/A",
+                "volume": (
+                    float(volume)
+                    if volume
+                    else self.data["capital_flow"].get("volume", "N/A")
+                ),
+                "avg_volume_10d": (
+                    float(avg_vol)
+                    if avg_vol
+                    else self.data["capital_flow"].get("avg_volume_10d", "N/A")
+                ),
+                "volume_ratio": (
+                    round(ratio, 2)
+                    if ratio is not None
+                    else self.data["capital_flow"].get("volume_ratio", "N/A")
+                ),
+                "estimated_flow_intensity": intensity,
+                "net_flow_proxy_usd": (
+                    round(net_flow_proxy, 2)
+                    if isinstance(net_flow_proxy, (int, float))
+                    else self.data["capital_flow"].get("net_flow_proxy_usd", "N/A")
+                ),
+            }
+        )
 
     def _fetch_alpha_vantage_overview(self) -> Optional[Dict[str, Any]]:
         api_key = self._get_alpha_vantage_key()
@@ -1191,41 +1622,28 @@ class StockResearchEngine:
             t = yf.Ticker(self.ticker)
 
             # 1. Price History & Technicals
+            current_price = 0
             try:
-                # Try multiple periods if 1y fails
-                hist = t.history(period="1y")
-                if hist.empty:
-                    hist = t.history(period="1mo")
-                if hist.empty:
-                    hist = t.history(period="5d")
-
+                hist, history_source = self._fetch_price_history(t)
                 if not hist.empty:
-                    current_price = float(hist["Close"].iloc[-1])
-                    prev_close = (
-                        float(hist["Close"].iloc[-2])
-                        if len(hist) > 1
-                        else current_price
-                    )
-                    self.data["price"].update(
-                        {
-                            "current_price": round(current_price, 3),
-                            "change": round(current_price - prev_close, 3),
-                            "change_percent": round(
-                                ((current_price - prev_close) / prev_close) * 100, 2
-                            ),
-                        }
-                    )
-                    self.data["technicals"].update(self._calculate_indicators(hist))
+                    current_price = self._apply_price_history(hist, history_source)
                 else:
-                    # Fallback to fast_info if history is empty
+                    # Last resort for price only; technical indicators need daily OHLCV.
                     try:
-                        current_price = t.fast_info["lastPrice"]
-                        self.data["price"]["current_price"] = round(current_price, 3)
-                    except:
-                        current_price = 0
+                        current_price = self._to_float(t.fast_info["lastPrice"])
+                        if current_price > 0:
+                            self.data["price"]["current_price"] = round(
+                                current_price, 3
+                            )
+                            self.data["diagnostics"].append(
+                                "price_source: Yahoo fast_info lastPrice"
+                            )
+                    except Exception as e:
+                        self.data["diagnostics"].append(
+                            f"fast_info_price_unavailable: {e}"
+                        )
             except Exception as e:
                 self.data["diagnostics"].append(f"price_history_unavailable: {e}")
-                current_price = 0
 
             if current_price <= 0:
                 if (
@@ -1240,7 +1658,9 @@ class StockResearchEngine:
             try:
                 info = t.info
                 if info:
-                    self.data["company_name"] = info.get("longName", self.ticker)
+                    company_name = info.get("longName") or info.get("shortName")
+                    if company_name:
+                        self.data["company_name"] = company_name
                     raw_desc = info.get("longBusinessSummary", "N/A")
                     self.data["description"] = self._summarize_description(raw_desc, 30)
 
@@ -1272,66 +1692,50 @@ class StockResearchEngine:
                         )
 
                     # Capital Flow Analysis
-                    market_cap = info.get("marketCap")
-                    volume = info.get("volume") or info.get("regularMarketVolume")
-                    avg_vol = info.get("averageVolume10days") or info.get(
-                        "averageVolume"
+                    market_cap = self._to_float(info.get("marketCap"))
+                    volume = self._to_float(
+                        info.get("volume") or info.get("regularMarketVolume")
                     )
-
-                    bucket = "N/A"
-                    if isinstance(market_cap, (int, float)):
-                        if market_cap >= 200_000_000_000:
-                            bucket = "特大盘 (Mega Cap)"
-                        elif market_cap >= 10_000_000_000:
-                            bucket = "大盘 (Large Cap)"
-                        elif market_cap >= 2_000_000_000:
-                            bucket = "中盘 (Mid Cap)"
-                        else:
-                            bucket = "小盘 (Small Cap)"
-
-                    ratio = (
-                        (float(volume) / float(avg_vol)) if volume and avg_vol else None
+                    avg_vol = self._to_float(
+                        info.get("averageVolume10days") or info.get("averageVolume")
                     )
-                    intensity = "N/A"
-                    if ratio is not None:
-                        if ratio >= 1.5:
-                            intensity = "强流入/强成交"
-                        elif ratio >= 1.0:
-                            intensity = "中性偏强"
-                        else:
-                            intensity = "偏弱"
-
-                    net_flow_proxy = (
-                        (float(volume) * current_price)
-                        if volume and current_price
-                        else "N/A"
+                    self._update_capital_flow_snapshot(
+                        market_cap, volume, avg_vol, current_price
                     )
-                    self.data["capital_flow"] = {
-                        "market_bucket": bucket,
-                        "market_cap": float(market_cap) if market_cap else "N/A",
-                        "volume": float(volume) if volume else "N/A",
-                        "avg_volume_10d": float(avg_vol) if avg_vol else "N/A",
-                        "volume_ratio": round(ratio, 2) if ratio is not None else "N/A",
-                        "estimated_flow_intensity": intensity,
-                        "net_flow_proxy_usd": (
-                            round(net_flow_proxy, 2)
-                            if isinstance(net_flow_proxy, (int, float))
-                            else "N/A"
-                        ),
-                        **self._get_market_flow_analysis(),
-                    }
+                    self.data["diagnostics"].append(
+                        "profile_source: Yahoo yfinance info"
+                    )
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
 
-            if not self.data["capital_flow"].get("market_flow_details"):
-                self.data["capital_flow"].update(self._get_market_flow_analysis())
-
             has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            if (
+            missing_profile_fields = (
                 not has_profile
                 or self.data["capital_flow"].get("market_cap") == "N/A"
-            ):
+                or self.data["price"].get("pe_ratio") == "N/A"
+                or self.data["price"].get("pb_ratio") == "N/A"
+            )
+            if missing_profile_fields:
+                self._apply_yahoo_quote_summary(current_price)
+                current_price = self._to_float(self.data["price"].get("current_price"))
+
+            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
+            missing_profile_fields = (
+                not has_profile
+                or self.data["capital_flow"].get("market_cap") == "N/A"
+                or self.data["price"].get("pe_ratio") == "N/A"
+                or self.data["price"].get("pb_ratio") == "N/A"
+            )
+            if missing_profile_fields:
+                self._apply_yahoo_quote_lookup(current_price)
+                current_price = self._to_float(self.data["price"].get("current_price"))
+
+            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
+            if not has_profile or self.data["capital_flow"].get("market_cap") == "N/A":
                 self._apply_alpha_vantage_overview()
+
+            if not self.data["capital_flow"].get("market_flow_details"):
+                self.data["capital_flow"].update(self._get_market_flow_analysis())
 
             # 3. Real institutional holders (Yahoo Finance first, Alpha Vantage fallback)
             self.data["capital_flow"][
