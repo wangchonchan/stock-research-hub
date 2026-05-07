@@ -1365,11 +1365,34 @@ class StockResearchEngine:
                 self.data["diagnostics"].append(
                     f"stooq_flow_partial: missing {', '.join(missing[:6])}"
                 )
-            return {"source": "Stooq delayed ETF daily CSV", "data": stooq_results}
+            return {"source": "免费延迟 ETF 日线（Stooq）", "data": stooq_results}
 
         if stooq_errors:
             self.data["diagnostics"].append(
                 f"stooq_flow_unavailable: {'; '.join(stooq_errors[:3])}"
+            )
+
+        chart_results = {}
+        chart_errors = []
+        for symbol in symbols:
+            try:
+                hist = self._fetch_yahoo_chart_history(symbol, days=20)
+                if not hist.empty:
+                    chart_results[symbol] = hist
+            except Exception as e:
+                chart_errors.append(f"{symbol}: {e}")
+
+        if chart_results:
+            missing = [symbol for symbol in symbols if symbol not in chart_results]
+            if missing:
+                self.data["diagnostics"].append(
+                    f"chart_flow_partial: missing {', '.join(missing[:6])}"
+                )
+            return {"source": "免费延迟 ETF 日线备用源", "data": chart_results}
+
+        if chart_errors:
+            self.data["diagnostics"].append(
+                f"chart_flow_unavailable: {'; '.join(chart_errors[:3])}"
             )
 
         try:
@@ -1385,7 +1408,7 @@ class StockResearchEngine:
             )
             if downloaded is not None and not downloaded.empty:
                 return {
-                    "source": "Yahoo Finance ETF download fallback",
+                    "source": "免费延迟 ETF 日线备用源",
                     "data": downloaded,
                 }
             return {"source": "N/A", "data": None}
