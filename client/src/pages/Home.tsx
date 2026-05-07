@@ -814,10 +814,6 @@ export default function Home() {
                           <Wallet className="text-blue-600" />
                           市场资金活跃度拆解
                         </CardTitle>
-                        <p className="mt-1 text-xs text-slate-500">
-                          ETF 活跃度数据源：
-                          {data.capital_flow.market_flow_source ?? "N/A"}
-                        </p>
                       </div>
                       <Badge
                         variant="outline"
