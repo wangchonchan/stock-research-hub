@@ -3,13 +3,15 @@
 Stock Research Engine v3.2 - Robust Data Fetching & Comprehensive Capital Flow Analysis
 """
 
+import csv
 import json
 import os
 import sys
+from io import StringIO
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import requests
 import yfinance as yf
 import urllib.request
@@ -249,6 +251,192 @@ class StockResearchEngine:
             if key in record and record[key] not in (None, ""):
                 return record[key]
         return default
+
+    def _request_get(self, url: str, **kwargs) -> requests.Response:
+        """Run a bounded HTTP GET without letting provider calls hang the API."""
+        headers = kwargs.pop("headers", {}) or {}
+        headers.setdefault("User-Agent", "stock-research-hub/1.0 Mozilla/5.0")
+        timeout = kwargs.pop("timeout", 8)
+        response = requests.get(url, headers=headers, timeout=timeout, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def _get_alpha_vantage_key(self) -> Optional[str]:
+        return os.getenv("ALPHA_VANTAGE_API_KEY") or os.getenv("ALPHAVANTAGE_API_KEY")
+
+    def _fetch_alpha_vantage_global_quote(self) -> Optional[Dict[str, Any]]:
+        api_key = self._get_alpha_vantage_key()
+        if not api_key:
+            return None
+
+        try:
+            payload = self._request_get(
+                "https://www.alphavantage.co/query",
+                params={
+                    "function": "GLOBAL_QUOTE",
+                    "symbol": self.ticker,
+                    "apikey": api_key,
+                },
+            ).json()
+            quote = payload.get("Global Quote") or {}
+            price = self._to_float(quote.get("05. price"))
+            if price <= 0:
+                message = (
+                    payload.get("Information")
+                    or payload.get("Note")
+                    or payload.get("Error Message")
+                )
+                if message:
+                    self.data["diagnostics"].append(
+                        f"alpha_vantage_quote_unavailable: {message}"
+                    )
+                return None
+            return quote
+        except Exception as e:
+            self.data["diagnostics"].append(f"alpha_vantage_quote_unavailable: {e}")
+            return None
+
+    def _apply_alpha_vantage_global_quote(self) -> bool:
+        quote = self._fetch_alpha_vantage_global_quote()
+        if not quote:
+            return False
+
+        price = self._to_float(quote.get("05. price"))
+        previous_close = self._to_float(quote.get("08. previous close"))
+        change = self._to_float(quote.get("09. change"), price - previous_close)
+        change_percent_raw = str(quote.get("10. change percent", "")).replace("%", "")
+        change_percent = self._to_float(change_percent_raw)
+        volume = self._to_float(quote.get("06. volume"))
+
+        self.data["price"].update(
+            {
+                "current_price": round(price, 3),
+                "change": round(change, 3),
+                "change_percent": round(change_percent, 2),
+            }
+        )
+        if volume > 0:
+            self.data["capital_flow"]["volume"] = volume
+            if price > 0:
+                self.data["capital_flow"]["net_flow_proxy_usd"] = round(
+                    volume * price, 2
+                )
+        self.data["diagnostics"].append("price_source: Alpha Vantage GLOBAL_QUOTE")
+        return True
+
+    def _apply_stooq_quote_fallback(self) -> bool:
+        # Stooq uses .US suffix for U.S. equities and exposes a small CSV quote API.
+        symbol = self.ticker.lower()
+        if "." not in symbol:
+            symbol = f"{symbol}.us"
+        try:
+            response = self._request_get(
+                "https://stooq.com/q/l/",
+                params={"s": symbol, "f": "sd2t2ohlcv", "h": "", "e": "csv"},
+            )
+            rows = list(csv.DictReader(StringIO(response.text)))
+            if not rows:
+                return False
+            row = rows[0]
+            close = self._to_float(row.get("Close"))
+            if close <= 0:
+                return False
+            open_price = self._to_float(row.get("Open"), close)
+            volume = self._to_float(row.get("Volume"))
+            change = close - open_price
+            self.data["price"].update(
+                {
+                    "current_price": round(close, 3),
+                    "change": round(change, 3),
+                    "change_percent": (
+                        round((change / open_price) * 100, 2)
+                        if open_price
+                        else 0
+                    ),
+                }
+            )
+            if volume > 0:
+                self.data["capital_flow"]["volume"] = volume
+                self.data["capital_flow"]["net_flow_proxy_usd"] = round(
+                    volume * close, 2
+                )
+            self.data["diagnostics"].append("price_source: Stooq delayed quote CSV")
+            return True
+        except Exception as e:
+            self.data["diagnostics"].append(f"stooq_quote_unavailable: {e}")
+            return False
+
+    def _fetch_alpha_vantage_overview(self) -> Optional[Dict[str, Any]]:
+        api_key = self._get_alpha_vantage_key()
+        if not api_key:
+            return None
+
+        try:
+            payload = self._request_get(
+                "https://www.alphavantage.co/query",
+                params={
+                    "function": "OVERVIEW",
+                    "symbol": self.ticker,
+                    "apikey": api_key,
+                },
+            ).json()
+            if not payload or "Symbol" not in payload:
+                message = (
+                    (
+                        payload.get("Information")
+                        or payload.get("Note")
+                        or payload.get("Error Message")
+                    )
+                    if isinstance(payload, dict)
+                    else None
+                )
+                if message:
+                    self.data["diagnostics"].append(
+                        f"alpha_vantage_overview_unavailable: {message}"
+                    )
+                return None
+            return payload
+        except Exception as e:
+            self.data["diagnostics"].append(f"alpha_vantage_overview_unavailable: {e}")
+            return None
+
+    def _apply_alpha_vantage_overview(self) -> bool:
+        overview = self._fetch_alpha_vantage_overview()
+        if not overview:
+            return False
+
+        self.data["company_name"] = overview.get("Name") or self.data["company_name"]
+        description = overview.get("Description") or self.data["description"]
+        self.data["description"] = self._summarize_description(description, 30)
+        pe_ratio = self._to_float(overview.get("PERatio"))
+        pb_ratio = self._to_float(overview.get("PriceToBookRatio"))
+        if pe_ratio > 0:
+            self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
+        if pb_ratio > 0:
+            self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+
+        target = self._to_float(overview.get("AnalystTargetPrice"))
+        current_price = self._to_float(self.data["price"].get("current_price"))
+        if target > 0:
+            self.data["consensus"]["target_price"] = round(target, 2)
+            if current_price > 0:
+                self.data["consensus"]["upside_potential"] = round(
+                    ((target - current_price) / current_price) * 100, 1
+                )
+
+        market_cap = self._to_float(overview.get("MarketCapitalization"))
+        if market_cap > 0:
+            self.data["capital_flow"]["market_cap"] = market_cap
+            if market_cap >= 200_000_000_000:
+                self.data["capital_flow"]["market_bucket"] = "特大盘 (Mega Cap)"
+            elif market_cap >= 10_000_000_000:
+                self.data["capital_flow"]["market_bucket"] = "大盘 (Large Cap)"
+            elif market_cap >= 2_000_000_000:
+                self.data["capital_flow"]["market_bucket"] = "中盘 (Mid Cap)"
+            else:
+                self.data["capital_flow"]["market_bucket"] = "小盘 (Small Cap)"
+        self.data["diagnostics"].append("profile_source: Alpha Vantage OVERVIEW")
+        return True
 
     def _normalize_institutional_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         holder = self._first_value(
@@ -966,6 +1154,15 @@ class StockResearchEngine:
                 self.data["diagnostics"].append(f"price_history_unavailable: {e}")
                 current_price = 0
 
+            if current_price <= 0:
+                if (
+                    self._apply_alpha_vantage_global_quote()
+                    or self._apply_stooq_quote_fallback()
+                ):
+                    current_price = self._to_float(
+                        self.data["price"].get("current_price")
+                    )
+
             # 2. Company Info & Capital Flow
             try:
                 info = t.info
@@ -1052,6 +1249,10 @@ class StockResearchEngine:
                     }
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
+
+            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
+            if not has_profile or self.data["capital_flow"].get("market_cap") == "N/A":
+                self._apply_alpha_vantage_overview()
 
             # 3. Real institutional holders (Yahoo Finance first, Alpha Vantage fallback)
             self.data["capital_flow"][

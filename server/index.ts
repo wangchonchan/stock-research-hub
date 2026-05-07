@@ -16,6 +16,8 @@ interface ResearchResult {
   diagnostics?: string[];
 }
 
+const PYTHON_BIN = process.env.PYTHON_BIN || process.env.PYTHON || "python3";
+
 function extractLastJsonObject(output: string): string | null {
   const end = output.lastIndexOf("}");
   if (end === -1) return null;
@@ -88,16 +90,36 @@ async function startServer() {
     console.log(
       `Running python script at: ${scriptPath} for ticker: ${ticker}`
     );
-    const pythonProcess = spawn("python3", [scriptPath, ticker], {
+    const pythonProcess = spawn(PYTHON_BIN, [scriptPath, ticker], {
       env: { ...process.env, PYTHONUNBUFFERED: "1" },
     });
 
+    let didRespond = false;
+    let timedOut = false;
     const timeout = setTimeout(() => {
+      timedOut = true;
       pythonProcess.kill("SIGTERM");
-    }, 45_000);
+    }, 60_000);
 
     let stdoutData = "";
     let stderrData = "";
+
+    pythonProcess.on("error", err => {
+      clearTimeout(timeout);
+      if (didRespond) return;
+      didRespond = true;
+      console.error(
+        `Failed to start research engine with ${PYTHON_BIN}: ${err}`
+      );
+      res.status(500).json({
+        error: "Failed to start stock research engine",
+        details: err instanceof Error ? err.message : String(err),
+        diagnostics: [
+          `Configured Python binary: ${PYTHON_BIN}`,
+          "Set PYTHON_BIN=/path/to/python if the runtime does not expose python3.",
+        ],
+      });
+    });
 
     pythonProcess.stdout.on("data", chunk => {
       stdoutData += chunk.toString();
@@ -109,8 +131,10 @@ async function startServer() {
 
     pythonProcess.on("close", (code, signal) => {
       clearTimeout(timeout);
+      if (didRespond) return;
 
-      if (signal === "SIGTERM") {
+      if (timedOut || signal === "SIGTERM") {
+        didRespond = true;
         console.error(`Python process timed out for ${ticker}: ${stderrData}`);
         return res.status(504).json({
           error: "Stock research timed out",
@@ -121,6 +145,7 @@ async function startServer() {
       }
 
       if (code !== 0) {
+        didRespond = true;
         console.error(`Python process exited with code ${code}: ${stderrData}`);
         return res.status(500).json({
           error: "Failed to fetch stock data",
@@ -156,11 +181,13 @@ async function startServer() {
         // Do not fail the search just because an upstream data provider returned
         // partial data. The UI can still render the report shell and diagnostics,
         // which keeps the core search flow responsive.
+        didRespond = true;
         res.json(result);
       } catch (err) {
         console.error(
           `Error parsing Python output: ${err}\nRaw output: ${stdoutData}`
         );
+        didRespond = true;
         res.status(500).json({
           error: "Invalid data format from research engine",
           details: err instanceof Error ? err.message : String(err),
