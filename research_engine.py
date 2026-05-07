@@ -1,3 +1,4 @@
+import math
 #!/usr/bin/env python3
 """
 Stock Research Engine v3.2 - Robust Data Fetching & Comprehensive Capital Flow Analysis
@@ -1028,131 +1029,26 @@ class StockResearchEngine:
             "top_decreases": decreases[:5],
         }
 
+    
     def _fetch_yahoo_institutional_flow(self) -> Dict[str, Any]:
         try:
-            response = requests.get(
-                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
-                params={
-                    "modules": "institutionOwnership",
-                    "formatted": "false",
-                    "corsDomain": "finance.yahoo.com",
-                },
-                timeout=8,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            response.raise_for_status()
-            payload = response.json()
-            result = payload.get("quoteSummary", {}).get("result") or []
-            ownership = result[0].get("institutionOwnership", {}) if result else {}
-            raw_records = ownership.get("ownershipList") or []
-            records = []
-            for item in raw_records:
-                if not isinstance(item, dict):
-                    continue
-                normalized = {
-                    "Holder": self._first_value(item, ["organization"]),
-                    "Date Reported": (
-                        datetime.fromtimestamp(item["reportDate"]).strftime("%Y-%m-%d")
-                        if item.get("reportDate")
-                        else "N/A"
-                    ),
-                    "Shares": self._first_value(item, ["position"]),
-                    "Value": self._first_value(item, ["value"]),
-                }
-                record = self._normalize_institutional_record(normalized)
-                if record["holder"] != "N/A":
-                    records.append(record)
-
-            if not records:
-                return self._empty_institutional_flow(
-                    "Yahoo Finance 未返回机构持仓记录。"
-                )
+            import yfinance as yf
+            t = yf.Ticker(self.ticker)
+            ih = t.institutional_holders
+            if ih is None or ih.empty:
+                return self._empty_institutional_flow("yfinance 未返回机构持仓记录。")
+            records = self._records_from_holders_df(ih)
             return self._build_institutional_payload(
                 records,
-                "Yahoo Finance quoteSummary institutionOwnership",
-                "真实 Yahoo Finance 机构持仓数据；通常来自 13F/机构披露，存在报告延迟，不代表实时逐笔资金流。",
+                "yfinance institutional_holders",
+                "真实机构持仓数据；来自 yfinance (Yahoo Finance)；存在报告延迟。",
             )
         except Exception as e:
-            self.data["diagnostics"].append(
-                f"yahoo_institutional_flow_unavailable: {e}"
-            )
-            return self._empty_institutional_flow(
-                "Yahoo Finance 机构持仓当前不可用；已在 diagnostics 保留详细错误。可配置 ALPHA_VANTAGE_API_KEY 启用备用 13F 数据源。"
-            )
+            self.data["diagnostics"].append(f"yfinance_institutional_flow_unavailable: {e}")
+            return self._empty_institutional_flow(f"yfinance 机构持仓不可用: {e}")
 
     def _fetch_alpha_vantage_institutional_flow(self) -> Dict[str, Any]:
-        api_key = os.getenv("ALPHA_VANTAGE_API_KEY") or os.getenv(
-            "ALPHAVANTAGE_API_KEY"
-        )
-        base = self._empty_institutional_flow(
-            "Yahoo Finance 未返回数据；可配置 ALPHA_VANTAGE_API_KEY 作为备用真实 13F 数据源。",
-            "Alpha Vantage INSTITUTIONAL_HOLDINGS",
-        )
-        if not api_key:
-            return base
-
-        try:
-            response = requests.get(
-                "https://www.alphavantage.co/query",
-                params={
-                    "function": "INSTITUTIONAL_HOLDINGS",
-                    "symbol": self.ticker,
-                    "apikey": api_key,
-                },
-                timeout=8,
-                headers={"User-Agent": "stock-research-hub/1.0"},
-            )
-            response.raise_for_status()
-            payload = response.json()
-            if (
-                "Information" in payload
-                or "Note" in payload
-                or "Error Message" in payload
-            ):
-                base["note"] = (
-                    payload.get("Information")
-                    or payload.get("Note")
-                    or payload.get("Error Message")
-                )
-                return base
-
-            raw_records = None
-            for key in (
-                "data",
-                "holdings",
-                "institutionalHoldings",
-                "institutional_holders",
-            ):
-                if isinstance(payload.get(key), list):
-                    raw_records = payload[key]
-                    break
-            if raw_records is None and isinstance(payload, list):
-                raw_records = payload
-            if not raw_records:
-                base["note"] = "API 未返回机构持仓记录。"
-                return base
-
-            records = [
-                self._normalize_institutional_record(item)
-                for item in raw_records
-                if isinstance(item, dict)
-            ]
-            records = [item for item in records if item["holder"] != "N/A"]
-            if not records:
-                base["note"] = "API 返回格式中没有可识别的机构持仓字段。"
-                return base
-
-            return self._build_institutional_payload(
-                records,
-                "Alpha Vantage INSTITUTIONAL_HOLDINGS",
-                "真实 13F 机构持仓数据；通常按季度披露，存在报告延迟，不代表实时逐笔资金流。",
-            )
-        except Exception as e:
-            self.data["diagnostics"].append(
-                f"alpha_vantage_institutional_flow_unavailable: {e}"
-            )
-            base["note"] = f"Alpha Vantage 机构持仓 API 请求失败：{e}"
-            return base
+        return self._empty_institutional_flow("已切换至 yfinance 数据源。")
 
     def _fetch_institutional_flow(self) -> Dict[str, Any]:
         yahoo_result = self._fetch_yahoo_institutional_flow()
@@ -1244,112 +1140,74 @@ class StockResearchEngine:
             premium >= 250_000 or ratio >= 2 or (open_interest == 0 and volume >= 1000)
         )
 
+    
     def _fetch_options_flow(self) -> Dict[str, Any]:
         try:
-            first_payload = self._fetch_yahoo_options_payload()
-            result = first_payload.get("optionChain", {}).get("result") or []
-            if not result:
-                return self._empty_options_flow("Yahoo Finance 未返回期权链。")
-
-            chain_root = result[0]
-            expiration_dates = chain_root.get("expirationDates") or []
-            expirations_to_check = expiration_dates[:3]
-            if not expirations_to_check:
-                return self._empty_options_flow("Yahoo Finance 未返回可用期权到期日。")
-
+            import yfinance as yf
+            t = yf.Ticker(self.ticker)
+            expirations = t.options
+            if not expirations:
+                return self._empty_options_flow("yfinance 未返回可用期权到期日。")
+            
+            expirations_to_check = expirations[:3]
             unusual_contracts = []
             expirations_analyzed = []
             bullish_premium = 0
             bearish_premium = 0
-
-            for expiration in expirations_to_check:
-                payload = (
-                    first_payload
-                    if expiration == expirations_to_check[0]
-                    else self._fetch_yahoo_options_payload(expiration)
-                )
-                option_result = payload.get("optionChain", {}).get("result") or []
-                if not option_result:
+            
+            for exp in expirations_to_check:
+                try:
+                    chain = t.option_chain(exp)
+                except:
                     continue
-                option_sets = option_result[0].get("options") or []
-                if not option_sets:
-                    continue
+                expirations_analyzed.append(exp)
+                
+                for option_type, df in [("看涨", chain.calls), ("看跌", chain.puts)]:
+                    if df is None or df.empty: continue
+                    for _, row in df.iterrows():
+                        vol = self._to_float(row.get("volume"))
+                        oi = self._to_float(row.get("openInterest"))
+                        lp = self._to_float(row.get("lastPrice"))
+                        
+                        vol = self._to_float(row.get("volume"), 0)
+                        lp = self._to_float(row.get("lastPrice"), 0)
+                        prem = vol * lp * 100
 
-                expiration_label = datetime.fromtimestamp(expiration).strftime(
-                    "%Y-%m-%d"
-                )
-                expirations_analyzed.append(expiration_label)
-                option_set = option_sets[0]
-                for option_type, contracts in (
-                    ("看涨", option_set.get("calls") or []),
-                    ("看跌", option_set.get("puts") or []),
-                ):
-                    for contract in contracts:
-                        if not isinstance(contract, dict):
-                            continue
-                        item = self._normalize_option_contract(
-                            contract, option_type, expiration_label
-                        )
-                        if option_type == "看涨":
-                            bullish_premium += (
-                                item["premium_usd"]
-                                if isinstance(item["premium_usd"], (int, float))
-                                else 0
-                            )
-                        else:
-                            bearish_premium += (
-                                item["premium_usd"]
-                                if isinstance(item["premium_usd"], (int, float))
-                                else 0
-                            )
+                        
+                        if option_type == "看涨": bullish_premium += prem
+                        else: bearish_premium += prem
+                        
+                        item = {
+                            "contract_symbol": str(row.get("contractSymbol")),
+                            "type": option_type,
+                            "expiration": exp,
+                            "strike": self._to_float(row.get("strike")),
+                            "last_price": lp,
+                            "volume": vol,
+                            "open_interest": oi,
+                            "volume_oi_ratio": round(vol/oi, 2) if oi > 0 else "N/A",
+                            "premium_usd": round(prem, 2),
+                            "implied_volatility": round(self._to_float(row.get("impliedVolatility")) * 100, 2),
+                            "last_trade_date": str(row.get("lastTradeDate")),
+                        }
                         if self._is_unusual_option(item):
                             unusual_contracts.append(item)
-
-            unusual_contracts.sort(
-                key=lambda item: (
-                    item["premium_usd"]
-                    if isinstance(item["premium_usd"], (int, float))
-                    else 0
-                ),
-                reverse=True,
-            )
-            if not unusual_contracts:
-                return {
-                    "available": True,
-                    "source": "Yahoo Finance options chain",
-                    "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
-                    "expirations_analyzed": expirations_analyzed,
-                    "bullish_premium_proxy_usd": round(bullish_premium, 2),
-                    "bearish_premium_proxy_usd": round(bearish_premium, 2),
-                    "put_call_premium_ratio": (
-                        round(bearish_premium / bullish_premium, 2)
-                        if bullish_premium
-                        else "N/A"
-                    ),
-                    "unusual_contracts": [],
-                    "note": "未发现符合当前阈值的异常期权大单。",
-                }
-
+            
+            unusual_contracts.sort(key=lambda x: x["premium_usd"] if isinstance(x["premium_usd"], (int, float)) else 0, reverse=True)
             return {
                 "available": True,
-                "source": "Yahoo Finance options chain",
+                "source": "yfinance options chain",
                 "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
                 "expirations_analyzed": expirations_analyzed,
-                "bullish_premium_proxy_usd": round(bullish_premium, 2),
-                "bearish_premium_proxy_usd": round(bearish_premium, 2),
-                "put_call_premium_ratio": (
-                    round(bearish_premium / bullish_premium, 2)
-                    if bullish_premium
-                    else "N/A"
-                ),
+                "bullish_premium_proxy_usd": round(bullish_premium, 2) if not math.isnan(bullish_premium) else 0,
+                "bearish_premium_proxy_usd": round(bearish_premium, 2) if not math.isnan(bearish_premium) else 0,
+                "put_call_premium_ratio": round(bearish_premium / bullish_premium, 2) if bullish_premium > 0 else "N/A",
                 "unusual_contracts": unusual_contracts[:8],
-                "note": "基于 Yahoo Finance 期权链的成交量、未平仓量和权利金筛选；不包含买卖方向或机构身份。",
+                "note": "基于 yfinance 期权链筛选的异常成交合约。",
             }
         except Exception as e:
-            self.data["diagnostics"].append(f"options_flow_unavailable: {e}")
-            return self._empty_options_flow(
-                "Yahoo Finance 期权链当前不可用；已在 diagnostics 保留详细错误，页面将继续展示其它可用数据。"
-            )
+            self.data["diagnostics"].append(f"yfinance_options_flow_unavailable: {e}")
+            return self._empty_options_flow(f"yfinance 期权链不可用: {e}")
 
     def _flow_intensity(self, change_pct: float, volume_ratio: float) -> str:
         if change_pct > 0 and volume_ratio >= 1.2:
