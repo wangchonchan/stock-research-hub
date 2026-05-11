@@ -23,6 +23,10 @@ class StockResearchEngine:
     def __init__(self, ticker: str = "AAPL"):
         self.ticker = ticker.upper()
         self.hkt = timezone(timedelta(hours=8))
+        self.http_session = requests.Session()
+        self._yahoo_session_attempted = False
+        self._yahoo_session_ready = False
+        self._yahoo_crumb = None
         self.data = {
             "ticker": self.ticker,
             "company_name": "N/A",
@@ -253,12 +257,110 @@ class StockResearchEngine:
                 return record[key]
         return default
 
+    def _append_diagnostic_once(self, message: str) -> None:
+        if message not in self.data["diagnostics"]:
+            self.data["diagnostics"].append(message)
+
+    def _yahoo_headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        merged = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Origin": "https://finance.yahoo.com",
+            "Referer": f"https://finance.yahoo.com/quote/{self.ticker}",
+        }
+        if headers:
+            merged.update(headers)
+        return merged
+
+    def _is_yahoo_url(self, url: str) -> bool:
+        return "finance.yahoo.com" in url
+
+    def _prime_yahoo_session(self) -> None:
+        if self._yahoo_session_ready or self._yahoo_session_attempted:
+            return
+        self._yahoo_session_attempted = True
+        try:
+            response = self.http_session.get(
+                f"https://finance.yahoo.com/quote/{self.ticker}",
+                headers=self._yahoo_headers(
+                    {
+                        "Accept": (
+                            "text/html,application/xhtml+xml,"
+                            "application/xml;q=0.9,*/*;q=0.8"
+                        )
+                    }
+                ),
+                timeout=8,
+            )
+            if response.status_code < 500:
+                self._yahoo_session_ready = True
+        except Exception as e:
+            self._append_diagnostic_once(f"yahoo_session_unavailable: {e}")
+
+    def _get_yahoo_crumb(self) -> Optional[str]:
+        if self._yahoo_crumb:
+            return self._yahoo_crumb
+
+        self._prime_yahoo_session()
+        try:
+            response = self.http_session.get(
+                "https://query1.finance.yahoo.com/v1/test/getcrumb",
+                headers=self._yahoo_headers({"Accept": "text/plain,*/*"}),
+                timeout=8,
+            )
+            response.raise_for_status()
+            crumb = response.text.strip()
+            if crumb and "<" not in crumb and len(crumb) < 200:
+                self._yahoo_crumb = crumb
+                return crumb
+        except Exception as e:
+            self._append_diagnostic_once(f"yahoo_crumb_unavailable: {e}")
+        return None
+
+    def _request_yahoo_get(self, url: str, **kwargs) -> requests.Response:
+        """GET Yahoo endpoints with a browser-like session and crumb retry."""
+        headers = self._yahoo_headers(kwargs.pop("headers", {}) or {})
+        timeout = kwargs.pop("timeout", 8)
+        params = dict(kwargs.pop("params", {}) or {})
+        include_crumb = kwargs.pop("include_crumb", False)
+
+        self._prime_yahoo_session()
+        if include_crumb:
+            crumb = self._get_yahoo_crumb()
+            if crumb:
+                params.setdefault("crumb", crumb)
+
+        response = self.http_session.get(
+            url, headers=headers, timeout=timeout, params=params, **kwargs
+        )
+
+        if response.status_code in (401, 403):
+            self._yahoo_crumb = None
+            crumb = self._get_yahoo_crumb()
+            if crumb:
+                params["crumb"] = crumb
+                response = self.http_session.get(
+                    url, headers=headers, timeout=timeout, params=params, **kwargs
+                )
+
+        response.raise_for_status()
+        return response
+
     def _request_get(self, url: str, **kwargs) -> requests.Response:
         """Run a bounded HTTP GET without letting provider calls hang the API."""
+        if self._is_yahoo_url(url):
+            return self._request_yahoo_get(url, **kwargs)
+
         headers = kwargs.pop("headers", {}) or {}
         headers.setdefault("User-Agent", "stock-research-hub/1.0 Mozilla/5.0")
         timeout = kwargs.pop("timeout", 8)
-        response = requests.get(url, headers=headers, timeout=timeout, **kwargs)
+        response = self.http_session.get(url, headers=headers, timeout=timeout, **kwargs)
         response.raise_for_status()
         return response
 
@@ -634,6 +736,7 @@ class StockResearchEngine:
             payload = self._request_get(
                 f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
                 params={"modules": modules, "formatted": "false"},
+                include_crumb=True,
                 headers={
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json,text/plain,*/*",
@@ -830,6 +933,7 @@ class StockResearchEngine:
         try:
             payload = self._request_get(
                 "https://query2.finance.yahoo.com/ws/insights/v2/finance/insights",
+                include_crumb=True,
                 params={
                     "symbol": self.ticker,
                     "reportsCount": 3,
@@ -1154,17 +1258,15 @@ class StockResearchEngine:
 
     def _fetch_yahoo_institutional_flow(self) -> Dict[str, Any]:
         try:
-            response = requests.get(
+            response = self._request_yahoo_get(
                 f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
                 params={
                     "modules": "institutionOwnership",
                     "formatted": "false",
                     "corsDomain": "finance.yahoo.com",
                 },
-                timeout=8,
-                headers={"User-Agent": "Mozilla/5.0"},
+                include_crumb=True,
             )
-            response.raise_for_status()
             payload = response.json()
             result = payload.get("quoteSummary", {}).get("result") or []
             ownership = result[0].get("institutionOwnership", {}) if result else {}
@@ -1216,7 +1318,7 @@ class StockResearchEngine:
             return base
 
         try:
-            response = requests.get(
+            response = self._request_get(
                 "https://www.alphavantage.co/query",
                 params={
                     "function": "INSTITUTIONAL_HOLDINGS",
@@ -1226,7 +1328,6 @@ class StockResearchEngine:
                 timeout=8,
                 headers={"User-Agent": "stock-research-hub/1.0"},
             )
-            response.raise_for_status()
             payload = response.json()
             if (
                 "Information" in payload
@@ -1306,13 +1407,12 @@ class StockResearchEngine:
         params = {"formatted": "false"}
         if expiration is not None:
             params["date"] = expiration
-        response = requests.get(
+        response = self._request_yahoo_get(
             f"https://query2.finance.yahoo.com/v7/finance/options/{self.ticker}",
             params=params,
             timeout=8,
-            headers={"User-Agent": "Mozilla/5.0"},
+            include_crumb=True,
         )
-        response.raise_for_status()
         return response.json()
 
     def _normalize_option_contract(
