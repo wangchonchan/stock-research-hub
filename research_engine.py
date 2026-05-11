@@ -243,8 +243,10 @@ class StockResearchEngine:
     def _to_float(self, value, default: float = 0) -> float:
         if value is None or value == "N/A":
             return default
+        if isinstance(value, dict):
+            value = value.get("raw", value.get("fmt", default))
         try:
-            return float(str(value).replace(",", ""))
+            return float(str(value).replace(",", "").replace("%", ""))
         except Exception:
             return default
 
@@ -602,6 +604,39 @@ class StockResearchEngine:
             return value.get("raw", value.get("fmt", default))
         return default if value in (None, "") else value
 
+    def _fetch_yahoo_quote_summary_payload(
+        self, modules: str
+    ) -> Optional[Dict[str, Any]]:
+        """Try Yahoo quoteSummary hosts because query2 intermittently fails while query1 quote works."""
+        last_error = None
+        for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+            try:
+                payload = self._request_get(
+                    f"https://{host}/v10/finance/quoteSummary/{self.ticker}",
+                    params={"modules": modules, "formatted": "false"},
+                    headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json,text/plain,*/*",
+                        "Referer": "https://finance.yahoo.com/",
+                    },
+                ).json()
+                result = (payload.get("quoteSummary", {}).get("result") or [None])[0]
+                if result:
+                    self.data["diagnostics"].append(f"quote_summary_host: {host}")
+                    return result
+                last_error = payload.get("quoteSummary", {}).get("error")
+            except Exception as e:
+                last_error = e
+                self.data["diagnostics"].append(
+                    f"yahoo_quote_summary_host_unavailable: {host}: {e}"
+                )
+
+        if last_error:
+            self.data["diagnostics"].append(
+                f"yahoo_quote_summary_unavailable: {last_error}"
+            )
+        return None
+
     def _apply_yahoo_quote_summary(self, current_price: float = 0) -> bool:
         try:
             modules = ",".join(
@@ -613,22 +648,8 @@ class StockResearchEngine:
                     "summaryDetail",
                 ]
             )
-            payload = self._request_get(
-                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
-                params={"modules": modules, "formatted": "false"},
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json,text/plain,*/*",
-                    "Referer": "https://finance.yahoo.com/",
-                },
-            ).json()
-            result = (payload.get("quoteSummary", {}).get("result") or [None])[0]
+            result = self._fetch_yahoo_quote_summary_payload(modules)
             if not result:
-                error = payload.get("quoteSummary", {}).get("error")
-                if error:
-                    self.data["diagnostics"].append(
-                        f"yahoo_quote_summary_unavailable: {error}"
-                    )
                 return False
 
             price = result.get("price") or {}
@@ -730,11 +751,34 @@ class StockResearchEngine:
                     quote.get("trailingPE"), self._to_float(quote.get("forwardPE"))
                 )
                 pb_ratio = self._to_float(quote.get("priceToBook"))
+                book_value = self._to_float(quote.get("bookValue"))
+                if pb_ratio <= 0 and book_value > 0 and quote_price > 0:
+                    pb_ratio = quote_price / book_value
                 if pe_ratio > 0:
                     self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
                     did_update = True
                 if pb_ratio > 0:
                     self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+                    did_update = True
+
+                target = self._to_float(quote.get("targetMeanPrice"))
+                if target > 0:
+                    self.data["consensus"]["target_price"] = round(target, 2)
+                    if current_price > 0:
+                        self.data["consensus"]["upside_potential"] = round(
+                            ((target - current_price) / current_price) * 100, 1
+                        )
+                    did_update = True
+
+                recommendation = quote.get("recommendationKey")
+                if not recommendation and quote.get("averageAnalystRating"):
+                    recommendation = str(quote.get("averageAnalystRating")).split(
+                        " - "
+                    )[-1]
+                if recommendation:
+                    self.data["consensus"]["recommendation"] = str(
+                        recommendation
+                    ).upper()
                     did_update = True
 
                 market_cap = self._to_float(quote.get("marketCap"))
