@@ -249,7 +249,15 @@ class StockResearchEngine:
         if value is None or value == "N/A":
             return default
         try:
-            return float(str(value).replace(",", ""))
+            text = str(value).strip()
+            if text in ("", "--", "N/A"):
+                return default
+            multiplier = 1
+            if text.startswith("(") and text.endswith(")"):
+                multiplier = -1
+                text = text[1:-1]
+            text = re.sub(r"[^0-9.\-]", "", text)
+            return float(text) * multiplier if text not in ("", "-", ".") else default
         except Exception:
             return default
 
@@ -1360,6 +1368,119 @@ class StockResearchEngine:
                 "Yahoo Finance 机构持仓当前不可用；已在 diagnostics 保留详细错误。可配置 ALPHA_VANTAGE_API_KEY 启用备用 13F 数据源。"
             )
 
+    def _request_nasdaq_get(self, url: str, **kwargs) -> requests.Response:
+        headers = kwargs.pop("headers", {}) or {}
+        headers.setdefault(
+            "User-Agent",
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        )
+        headers.setdefault("Accept", "application/json,text/plain,*/*")
+        headers.setdefault("Accept-Language", "en-US,en;q=0.9")
+        headers.setdefault("Origin", "https://www.nasdaq.com")
+        headers.setdefault(
+            "Referer",
+            f"https://www.nasdaq.com/market-activity/stocks/{self.ticker.lower()}/institutional-holdings",
+        )
+        timeout = kwargs.pop("timeout", 8)
+        response = self.http_session.get(url, headers=headers, timeout=timeout, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def _collect_nasdaq_rows(self, value) -> List[Dict[str, Any]]:
+        rows = []
+        if isinstance(value, dict):
+            nested_rows = value.get("rows")
+            if isinstance(nested_rows, list):
+                rows.extend(item for item in nested_rows if isinstance(item, dict))
+            for item in value.values():
+                rows.extend(self._collect_nasdaq_rows(item))
+        elif isinstance(value, list):
+            rows.extend(item for item in value if isinstance(item, dict))
+        return rows
+
+    def _fetch_nasdaq_institutional_flow(self) -> Dict[str, Any]:
+        try:
+            response = self._request_nasdaq_get(
+                f"https://api.nasdaq.com/api/company/{self.ticker}/institutional-holdings",
+                params={
+                    "limit": 25,
+                    "type": "TOTAL",
+                    "sortColumn": "marketValue",
+                    "sortOrder": "DESC",
+                },
+            )
+            payload = response.json()
+            records = []
+            seen = set()
+            for row in self._collect_nasdaq_rows(payload.get("data", payload)):
+                holder = self._first_value(
+                    row,
+                    [
+                        "ownerName",
+                        "holder",
+                        "holderName",
+                        "institutionName",
+                        "institution",
+                        "name",
+                    ],
+                )
+                if holder == "N/A" or str(holder).lower() in ("total", ""):
+                    continue
+                normalized = self._normalize_institutional_record(
+                    {
+                        "Holder": holder,
+                        "Date Reported": self._first_value(
+                            row, ["date", "reportDate", "report_date", "period"]
+                        ),
+                        "Shares": self._first_value(
+                            row, ["sharesHeld", "shares", "position", "sharesHeldValue"]
+                        ),
+                        "Value": self._first_value(
+                            row, ["marketValue", "value", "market_value", "valueHeld"]
+                        ),
+                        "change": self._first_value(
+                            row,
+                            [
+                                "sharesChange",
+                                "change",
+                                "changeShares",
+                                "change_shares",
+                                "sharesChangeValue",
+                            ],
+                            None,
+                        ),
+                    }
+                )
+                key = (normalized["holder"], normalized["report_date"])
+                if normalized["holder"] != "N/A" and key not in seen:
+                    records.append(normalized)
+                    seen.add(key)
+
+            if not records:
+                return self._empty_institutional_flow(
+                    "Nasdaq institutional-holdings API 未返回可识别机构持仓记录。",
+                    "Nasdaq institutional-holdings API",
+                )
+
+            self.data["diagnostics"].append(
+                "institutional_flow_source: Nasdaq institutional-holdings API"
+            )
+            return self._build_institutional_payload(
+                records,
+                "Nasdaq institutional-holdings API",
+                "免费 Nasdaq institutional-holdings JSON 数据；基于公开机构持仓披露，通常存在季度报告延迟。",
+            )
+        except Exception as e:
+            self.data["diagnostics"].append(f"nasdaq_institutional_flow_unavailable: {e}")
+            return self._empty_institutional_flow(
+                f"Nasdaq institutional-holdings API 请求失败：{e}",
+                "Nasdaq institutional-holdings API",
+            )
+
     def _fetch_alpha_vantage_institutional_flow(self) -> Dict[str, Any]:
         api_key = os.getenv("ALPHA_VANTAGE_API_KEY") or os.getenv(
             "ALPHAVANTAGE_API_KEY"
@@ -1438,11 +1559,15 @@ class StockResearchEngine:
         if yahoo_result.get("available"):
             return yahoo_result
 
+        nasdaq_result = self._fetch_nasdaq_institutional_flow()
+        if nasdaq_result.get("available"):
+            return nasdaq_result
+
         fallback = self._fetch_alpha_vantage_institutional_flow()
         if fallback.get("available"):
             return fallback
 
-        return yahoo_result
+        return nasdaq_result if nasdaq_result.get("note") else yahoo_result
 
     def _empty_options_flow(self, note: str) -> Dict[str, Any]:
         return {
@@ -1522,7 +1647,104 @@ class StockResearchEngine:
             premium >= 250_000 or ratio >= 2 or (open_interest == 0 and volume >= 1000)
         )
 
-    def _fetch_options_flow(self) -> Dict[str, Any]:
+    def _parse_occ_option_symbol(self, option_symbol: str):
+        match = re.search(r"(\d{6})([CP])(\d{8})$", str(option_symbol))
+        if not match:
+            return None
+        date_part, option_type, strike_part = match.groups()
+        try:
+            expiration = datetime.strptime(date_part, "%y%m%d").strftime("%Y-%m-%d")
+            strike = int(strike_part) / 1000
+            return expiration, option_type, strike
+        except Exception:
+            return None
+
+    def _normalize_cboe_option_contract(self, contract: Dict[str, Any]):
+        parsed = self._parse_occ_option_symbol(contract.get("option", ""))
+        if not parsed:
+            return None
+        expiration, option_type, strike = parsed
+        volume = self._to_float(contract.get("volume"))
+        open_interest = self._to_float(contract.get("open_interest"))
+        last_price = self._to_float(contract.get("last_trade_price"))
+        premium = volume * last_price * 100 if volume and last_price else 0
+        return {
+            "contract_symbol": contract.get("option", "N/A"),
+            "type": "看涨" if option_type == "C" else "看跌",
+            "expiration": expiration,
+            "strike": strike,
+            "last_price": last_price,
+            "volume": volume,
+            "open_interest": open_interest,
+            "volume_oi_ratio": (
+                round(volume / open_interest, 2)
+                if open_interest and open_interest > 0
+                else "N/A"
+            ),
+            "premium_usd": round(premium, 2),
+            "implied_volatility": round(self._to_float(contract.get("iv")) * 100, 2),
+            "last_trade_date": str(contract.get("last_trade_time") or "N/A"),
+        }
+
+    def _fetch_cboe_options_flow(self) -> Dict[str, Any]:
+        try:
+            payload = self._request_get(
+                f"https://cdn.cboe.com/api/global/delayed_quotes/options/{self.ticker}.json",
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": f"https://www.cboe.com/delayed_quotes/{self.ticker}/quote_table",
+                },
+            ).json()
+            options = ((payload.get("data") or {}).get("options") or [])
+            normalized = []
+            expirations = set()
+            bullish_premium = 0
+            bearish_premium = 0
+            for contract in options:
+                if not isinstance(contract, dict):
+                    continue
+                item = self._normalize_cboe_option_contract(contract)
+                if not item:
+                    continue
+                expirations.add(item["expiration"])
+                if item["type"] == "看涨":
+                    bullish_premium += item["premium_usd"]
+                else:
+                    bearish_premium += item["premium_usd"]
+                if self._is_unusual_option(item):
+                    normalized.append(item)
+
+            if not expirations:
+                return self._empty_options_flow("Cboe delayed options API 未返回可识别期权链。")
+
+            normalized.sort(
+                key=lambda item: item["premium_usd"]
+                if isinstance(item["premium_usd"], (int, float))
+                else 0,
+                reverse=True,
+            )
+            self.data["diagnostics"].append("options_flow_source: Cboe delayed options API")
+            return {
+                "available": True,
+                "source": "Cboe delayed options API",
+                "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
+                "expirations_analyzed": sorted(expirations)[:8],
+                "bullish_premium_proxy_usd": round(bullish_premium, 2),
+                "bearish_premium_proxy_usd": round(bearish_premium, 2),
+                "put_call_premium_ratio": (
+                    round(bearish_premium / bullish_premium, 2)
+                    if bullish_premium
+                    else "N/A"
+                ),
+                "unusual_contracts": normalized[:8],
+                "note": "基于 Cboe 免费延迟期权链 JSON 的成交量、未平仓量和权利金筛选；通常约 15 分钟延迟。",
+            }
+        except Exception as e:
+            self.data["diagnostics"].append(f"cboe_options_flow_unavailable: {e}")
+            return self._empty_options_flow(f"Cboe delayed options API 请求失败：{e}")
+
+    def _fetch_yahoo_options_flow(self) -> Dict[str, Any]:
         try:
             first_payload = self._fetch_yahoo_options_payload()
             result = first_payload.get("optionChain", {}).get("result") or []
@@ -1624,10 +1846,21 @@ class StockResearchEngine:
                 "note": "基于 Yahoo Finance 期权链的成交量、未平仓量和权利金筛选；不包含买卖方向或机构身份。",
             }
         except Exception as e:
-            self.data["diagnostics"].append(f"options_flow_unavailable: {e}")
+            self.data["diagnostics"].append(f"yahoo_options_flow_unavailable: {e}")
             return self._empty_options_flow(
                 "Yahoo Finance 期权链当前不可用；已在 diagnostics 保留详细错误，页面将继续展示其它可用数据。"
             )
+
+    def _fetch_options_flow(self) -> Dict[str, Any]:
+        yahoo_result = self._fetch_yahoo_options_flow()
+        if yahoo_result.get("available"):
+            return yahoo_result
+
+        cboe_result = self._fetch_cboe_options_flow()
+        if cboe_result.get("available"):
+            return cboe_result
+
+        return cboe_result
 
     def _flow_intensity(self, change_pct: float, volume_ratio: float) -> str:
         if change_pct > 0 and volume_ratio >= 1.2:
