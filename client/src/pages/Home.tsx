@@ -266,6 +266,9 @@ export default function Home() {
         try {
           const errorPayload = (await response.json()) as StockResearchError;
           message = errorPayload.details || errorPayload.error || message;
+          if (errorPayload.diagnostics?.length) {
+            message = `${message} ${errorPayload.diagnostics[0]}`;
+          }
         } catch {
           // Keep the generic message when the server does not return JSON.
         }

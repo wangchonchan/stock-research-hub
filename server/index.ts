@@ -188,15 +188,26 @@ async function startServer() {
             result.company_name !== "N/A" &&
             result.company_name !== result.ticker
         );
-        if (!hasPrice && !hasProfile) {
-          console.warn(
-            `Research engine returned partial/empty data for ${ticker}: ${diagnostics.join("; ")}`
+
+        if (!hasPrice) {
+          console.error(
+            `Research engine did not return a usable live price for ${ticker}: ${diagnostics.join("; ")}`
           );
+          didRespond = true;
+          return res.status(502).json({
+            error: "Live stock data unavailable",
+            details:
+              "The research engine ran, but none of the configured upstream finance providers returned a usable price.",
+            diagnostics: [
+              `Ticker: ${ticker}`,
+              hasProfile
+                ? `Profile resolved as: ${result.company_name}`
+                : "Company profile was not resolved.",
+              ...diagnostics,
+            ],
+          });
         }
 
-        // Do not fail the search just because an upstream data provider returned
-        // partial data. The UI can still render the report shell and diagnostics,
-        // which keeps the core search flow responsive.
         didRespond = true;
         res.json(result);
       } catch (err) {
