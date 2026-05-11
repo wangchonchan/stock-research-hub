@@ -601,6 +601,25 @@ class StockResearchEngine:
             return value.get("raw", value.get("fmt", default))
         return default if value in (None, "") else value
 
+    def _consensus_from_rating(self, value) -> str:
+        rating = str(self._raw_value(value, "")).strip()
+        if not rating:
+            return "N/A"
+        if " - " in rating:
+            rating = rating.split(" - ", 1)[1]
+        return rating.upper() if rating else "N/A"
+
+    def _has_missing_enrichment_fields(self) -> bool:
+        has_profile = self.data["company_name"] not in ("N/A", self.ticker)
+        return (
+            not has_profile
+            or self.data["capital_flow"].get("market_cap") == "N/A"
+            or self.data["price"].get("pe_ratio") == "N/A"
+            or self.data["price"].get("pb_ratio") == "N/A"
+            or self.data["consensus"].get("target_price") == "N/A"
+            or self.data["consensus"].get("recommendation") == "N/A"
+        )
+
     def _apply_yahoo_quote_summary(self, current_price: float = 0) -> bool:
         try:
             modules = ",".join(
@@ -728,12 +747,42 @@ class StockResearchEngine:
                 pe_ratio = self._to_float(
                     quote.get("trailingPE"), self._to_float(quote.get("forwardPE"))
                 )
+                if pe_ratio <= 0 and current_price > 0:
+                    eps = self._to_float(
+                        quote.get("epsTrailingTwelveMonths"),
+                        self._to_float(quote.get("epsForward")),
+                    )
+                    pe_ratio = current_price / eps if eps > 0 else 0
+
                 pb_ratio = self._to_float(quote.get("priceToBook"))
+                if pb_ratio <= 0 and current_price > 0:
+                    book_value = self._to_float(quote.get("bookValue"))
+                    pb_ratio = current_price / book_value if book_value > 0 else 0
+
                 if pe_ratio > 0:
                     self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
                     did_update = True
                 if pb_ratio > 0:
                     self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+                    did_update = True
+
+                target = self._to_float(
+                    quote.get("targetMeanPrice"),
+                    self._to_float(quote.get("targetMedianPrice")),
+                )
+                if target > 0:
+                    self.data["consensus"]["target_price"] = round(target, 2)
+                    if current_price > 0:
+                        self.data["consensus"]["upside_potential"] = round(
+                            ((target - current_price) / current_price) * 100, 1
+                        )
+                    did_update = True
+
+                recommendation = self._consensus_from_rating(
+                    quote.get("averageAnalystRating") or quote.get("recommendationKey")
+                )
+                if recommendation != "N/A":
+                    self.data["consensus"]["recommendation"] = recommendation
                     did_update = True
 
                 market_cap = self._to_float(quote.get("marketCap"))
@@ -775,6 +824,81 @@ class StockResearchEngine:
                 "profile_source: Yahoo quote/search fallback"
             )
         return did_update
+
+    def _apply_yahoo_insights(self, current_price: float = 0) -> bool:
+        """Fetch analyst recommendation/target from Yahoo's insights endpoint."""
+        try:
+            payload = self._request_get(
+                "https://query2.finance.yahoo.com/ws/insights/v2/finance/insights",
+                params={
+                    "symbol": self.ticker,
+                    "reportsCount": 3,
+                    "region": "US",
+                    "lang": "en-US",
+                },
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://finance.yahoo.com/",
+                },
+            ).json()
+
+            result = (payload.get("finance") or {}).get("result")
+            if isinstance(result, list):
+                result = result[0] if result else None
+            if not isinstance(result, dict):
+                error = (payload.get("finance") or {}).get("error")
+                if error:
+                    self.data["diagnostics"].append(
+                        f"yahoo_insights_unavailable: {error}"
+                    )
+                return False
+
+            did_update = False
+            recommendation = result.get("recommendation") or {}
+            target = self._to_float(recommendation.get("targetPrice"))
+            if target <= 0:
+                report_targets = [
+                    self._to_float(report.get("targetPrice"))
+                    for report in (result.get("reports") or [])
+                    if isinstance(report, dict)
+                ]
+                report_targets = [value for value in report_targets if value > 0]
+                target = report_targets[0] if report_targets else 0
+
+            if target > 0:
+                self.data["consensus"]["target_price"] = round(target, 2)
+                if current_price > 0:
+                    self.data["consensus"]["upside_potential"] = round(
+                        ((target - current_price) / current_price) * 100, 1
+                    )
+                did_update = True
+
+            rating = self._consensus_from_rating(recommendation.get("rating"))
+            if rating == "N/A":
+                report_ratings = [
+                    self._consensus_from_rating(report.get("investmentRating"))
+                    for report in (result.get("reports") or [])
+                    if isinstance(report, dict)
+                ]
+                rating = next(
+                    (
+                        report_rating
+                        for report_rating in report_ratings
+                        if report_rating != "N/A"
+                    ),
+                    "N/A",
+                )
+            if rating != "N/A":
+                self.data["consensus"]["recommendation"] = rating
+                did_update = True
+
+            if did_update:
+                self.data["diagnostics"].append("consensus_source: Yahoo insights")
+            return did_update
+        except Exception as e:
+            self.data["diagnostics"].append(f"yahoo_insights_unavailable: {e}")
+            return False
 
     def _market_bucket(self, market_cap: float) -> str:
         if market_cap >= 200_000_000_000:
@@ -1731,30 +1855,26 @@ class StockResearchEngine:
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
 
-            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            missing_profile_fields = (
-                not has_profile
-                or self.data["capital_flow"].get("market_cap") == "N/A"
-                or self.data["price"].get("pe_ratio") == "N/A"
-                or self.data["price"].get("pb_ratio") == "N/A"
-            )
-            if missing_profile_fields:
+            if self._has_missing_enrichment_fields():
                 self._apply_yahoo_quote_summary(current_price)
                 current_price = self._to_float(self.data["price"].get("current_price"))
 
-            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            missing_profile_fields = (
-                not has_profile
-                or self.data["capital_flow"].get("market_cap") == "N/A"
-                or self.data["price"].get("pe_ratio") == "N/A"
-                or self.data["price"].get("pb_ratio") == "N/A"
-            )
-            if missing_profile_fields:
+            if self._has_missing_enrichment_fields():
                 self._apply_yahoo_quote_lookup(current_price)
                 current_price = self._to_float(self.data["price"].get("current_price"))
 
+            if (
+                self.data["consensus"].get("target_price") == "N/A"
+                or self.data["consensus"].get("recommendation") == "N/A"
+            ):
+                self._apply_yahoo_insights(current_price)
+
             has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            if not has_profile or self.data["capital_flow"].get("market_cap") == "N/A":
+            if (
+                not has_profile
+                or self.data["capital_flow"].get("market_cap") == "N/A"
+                or self.data["consensus"].get("target_price") == "N/A"
+            ):
                 self._apply_alpha_vantage_overview()
 
             if not self.data["capital_flow"].get("market_flow_details"):
