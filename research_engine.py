@@ -23,6 +23,10 @@ class StockResearchEngine:
     def __init__(self, ticker: str = "AAPL"):
         self.ticker = ticker.upper()
         self.hkt = timezone(timedelta(hours=8))
+        self.http_session = requests.Session()
+        self._yahoo_session_attempted = False
+        self._yahoo_session_ready = False
+        self._yahoo_crumb = None
         self.data = {
             "ticker": self.ticker,
             "company_name": "N/A",
@@ -40,6 +44,8 @@ class StockResearchEngine:
                 "recommendation": "N/A",
                 "target_price": "N/A",
                 "upside_potential": "N/A",
+                "source": "N/A",
+                "updated_at": "N/A",
             },
             "fundamentals": {
                 "quarter": "N/A",
@@ -243,7 +249,15 @@ class StockResearchEngine:
         if value is None or value == "N/A":
             return default
         try:
-            return float(str(value).replace(",", ""))
+            text = str(value).strip()
+            if text in ("", "--", "N/A"):
+                return default
+            multiplier = 1
+            if text.startswith("(") and text.endswith(")"):
+                multiplier = -1
+                text = text[1:-1]
+            text = re.sub(r"[^0-9.\-]", "", text)
+            return float(text) * multiplier if text not in ("", "-", ".") else default
         except Exception:
             return default
 
@@ -253,12 +267,110 @@ class StockResearchEngine:
                 return record[key]
         return default
 
+    def _append_diagnostic_once(self, message: str) -> None:
+        if message not in self.data["diagnostics"]:
+            self.data["diagnostics"].append(message)
+
+    def _yahoo_headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        merged = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Origin": "https://finance.yahoo.com",
+            "Referer": f"https://finance.yahoo.com/quote/{self.ticker}",
+        }
+        if headers:
+            merged.update(headers)
+        return merged
+
+    def _is_yahoo_url(self, url: str) -> bool:
+        return "finance.yahoo.com" in url
+
+    def _prime_yahoo_session(self) -> None:
+        if self._yahoo_session_ready or self._yahoo_session_attempted:
+            return
+        self._yahoo_session_attempted = True
+        try:
+            response = self.http_session.get(
+                f"https://finance.yahoo.com/quote/{self.ticker}",
+                headers=self._yahoo_headers(
+                    {
+                        "Accept": (
+                            "text/html,application/xhtml+xml,"
+                            "application/xml;q=0.9,*/*;q=0.8"
+                        )
+                    }
+                ),
+                timeout=8,
+            )
+            if response.status_code < 500:
+                self._yahoo_session_ready = True
+        except Exception as e:
+            self._append_diagnostic_once(f"yahoo_session_unavailable: {e}")
+
+    def _get_yahoo_crumb(self) -> Optional[str]:
+        if self._yahoo_crumb:
+            return self._yahoo_crumb
+
+        self._prime_yahoo_session()
+        try:
+            response = self.http_session.get(
+                "https://query1.finance.yahoo.com/v1/test/getcrumb",
+                headers=self._yahoo_headers({"Accept": "text/plain,*/*"}),
+                timeout=8,
+            )
+            response.raise_for_status()
+            crumb = response.text.strip()
+            if crumb and "<" not in crumb and len(crumb) < 200:
+                self._yahoo_crumb = crumb
+                return crumb
+        except Exception as e:
+            self._append_diagnostic_once(f"yahoo_crumb_unavailable: {e}")
+        return None
+
+    def _request_yahoo_get(self, url: str, **kwargs) -> requests.Response:
+        """GET Yahoo endpoints with a browser-like session and crumb retry."""
+        headers = self._yahoo_headers(kwargs.pop("headers", {}) or {})
+        timeout = kwargs.pop("timeout", 8)
+        params = dict(kwargs.pop("params", {}) or {})
+        include_crumb = kwargs.pop("include_crumb", False)
+
+        self._prime_yahoo_session()
+        if include_crumb:
+            crumb = self._get_yahoo_crumb()
+            if crumb:
+                params.setdefault("crumb", crumb)
+
+        response = self.http_session.get(
+            url, headers=headers, timeout=timeout, params=params, **kwargs
+        )
+
+        if response.status_code in (401, 403):
+            self._yahoo_crumb = None
+            crumb = self._get_yahoo_crumb()
+            if crumb:
+                params["crumb"] = crumb
+                response = self.http_session.get(
+                    url, headers=headers, timeout=timeout, params=params, **kwargs
+                )
+
+        response.raise_for_status()
+        return response
+
     def _request_get(self, url: str, **kwargs) -> requests.Response:
         """Run a bounded HTTP GET without letting provider calls hang the API."""
+        if self._is_yahoo_url(url):
+            return self._request_yahoo_get(url, **kwargs)
+
         headers = kwargs.pop("headers", {}) or {}
         headers.setdefault("User-Agent", "stock-research-hub/1.0 Mozilla/5.0")
         timeout = kwargs.pop("timeout", 8)
-        response = requests.get(url, headers=headers, timeout=timeout, **kwargs)
+        response = self.http_session.get(url, headers=headers, timeout=timeout, **kwargs)
         response.raise_for_status()
         return response
 
@@ -601,6 +713,86 @@ class StockResearchEngine:
             return value.get("raw", value.get("fmt", default))
         return default if value in (None, "") else value
 
+    def _consensus_from_rating(self, value) -> str:
+        rating = str(self._raw_value(value, "")).strip()
+        if not rating:
+            return "N/A"
+        if " - " in rating:
+            rating = rating.split(" - ", 1)[1]
+        return rating.upper() if rating else "N/A"
+
+    def _consensus_from_trend(self, trend: Dict[str, Any]) -> str:
+        rows = trend.get("trend") if isinstance(trend, dict) else None
+        if not isinstance(rows, list) or not rows:
+            return "N/A"
+
+        current = next(
+            (row for row in rows if isinstance(row, dict) and row.get("period") == "0m"),
+            rows[0],
+        )
+        if not isinstance(current, dict):
+            return "N/A"
+
+        strong_buy = self._to_float(current.get("strongBuy"))
+        buy = self._to_float(current.get("buy"))
+        hold = self._to_float(current.get("hold"))
+        sell = self._to_float(current.get("sell"))
+        strong_sell = self._to_float(current.get("strongSell"))
+        total = strong_buy + buy + hold + sell + strong_sell
+        if total <= 0:
+            return "N/A"
+
+        score = ((strong_buy * 2) + buy - sell - (strong_sell * 2)) / total
+        if score >= 1.1:
+            return "STRONG BUY"
+        if score >= 0.35:
+            return "BUY"
+        if score <= -1.1:
+            return "STRONG SELL"
+        if score <= -0.35:
+            return "SELL"
+        return "HOLD"
+
+    def _update_consensus(
+        self,
+        *,
+        target: float = 0,
+        recommendation: str = "N/A",
+        current_price: float = 0,
+        source: str,
+    ) -> bool:
+        did_update = False
+        if target > 0:
+            self.data["consensus"]["target_price"] = round(target, 2)
+            if current_price > 0:
+                self.data["consensus"]["upside_potential"] = round(
+                    ((target - current_price) / current_price) * 100, 1
+                )
+            did_update = True
+
+        if recommendation != "N/A":
+            self.data["consensus"]["recommendation"] = recommendation
+            did_update = True
+
+        if did_update:
+            self.data["consensus"]["source"] = source
+            self.data["consensus"]["updated_at"] = datetime.now(self.hkt).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            self.data["diagnostics"].append(f"consensus_source: {source}")
+        return did_update
+
+    def _has_missing_enrichment_fields(self) -> bool:
+        has_profile = self.data["company_name"] not in ("N/A", self.ticker)
+        return (
+            not has_profile
+            or self.data["capital_flow"].get("market_cap") == "N/A"
+            or self.data["price"].get("pe_ratio") == "N/A"
+            or self.data["price"].get("pb_ratio") == "N/A"
+            or self.data["consensus"].get("target_price") == "N/A"
+            or self.data["consensus"].get("recommendation") == "N/A"
+        )
+
     def _apply_yahoo_quote_summary(self, current_price: float = 0) -> bool:
         try:
             modules = ",".join(
@@ -610,11 +802,13 @@ class StockResearchEngine:
                     "defaultKeyStatistics",
                     "financialData",
                     "summaryDetail",
+                    "recommendationTrend",
                 ]
             )
             payload = self._request_get(
                 f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
                 params={"modules": modules, "formatted": "false"},
+                include_crumb=True,
                 headers={
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json,text/plain,*/*",
@@ -635,6 +829,7 @@ class StockResearchEngine:
             stats = result.get("defaultKeyStatistics") or {}
             financial = result.get("financialData") or {}
             detail = result.get("summaryDetail") or {}
+            recommendation_trend = result.get("recommendationTrend") or {}
 
             self.data["company_name"] = self._raw_value(
                 price.get("longName"), self.data["company_name"]
@@ -665,15 +860,17 @@ class StockResearchEngine:
                 self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
 
             target = self._to_float(financial.get("targetMeanPrice"))
-            if target > 0:
-                self.data["consensus"]["target_price"] = round(target, 2)
-                if current_price > 0:
-                    self.data["consensus"]["upside_potential"] = round(
-                        ((target - current_price) / current_price) * 100, 1
-                    )
-            recommendation = self._raw_value(financial.get("recommendationKey"))
-            if recommendation != "N/A":
-                self.data["consensus"]["recommendation"] = str(recommendation).upper()
+            recommendation = self._consensus_from_trend(recommendation_trend)
+            if recommendation == "N/A":
+                recommendation = self._consensus_from_rating(
+                    financial.get("recommendationKey")
+                )
+            self._update_consensus(
+                target=target,
+                recommendation=recommendation,
+                current_price=current_price,
+                source="Yahoo quoteSummary financialData/recommendationTrend",
+            )
 
             market_cap = self._to_float(price.get("marketCap"))
             volume = self._to_float(price.get("regularMarketVolume"))
@@ -728,12 +925,38 @@ class StockResearchEngine:
                 pe_ratio = self._to_float(
                     quote.get("trailingPE"), self._to_float(quote.get("forwardPE"))
                 )
+                if pe_ratio <= 0 and current_price > 0:
+                    eps = self._to_float(
+                        quote.get("epsTrailingTwelveMonths"),
+                        self._to_float(quote.get("epsForward")),
+                    )
+                    pe_ratio = current_price / eps if eps > 0 else 0
+
                 pb_ratio = self._to_float(quote.get("priceToBook"))
+                if pb_ratio <= 0 and current_price > 0:
+                    book_value = self._to_float(quote.get("bookValue"))
+                    pb_ratio = current_price / book_value if book_value > 0 else 0
+
                 if pe_ratio > 0:
                     self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
                     did_update = True
                 if pb_ratio > 0:
                     self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+                    did_update = True
+
+                target = self._to_float(
+                    quote.get("targetMeanPrice"),
+                    self._to_float(quote.get("targetMedianPrice")),
+                )
+                recommendation = self._consensus_from_rating(
+                    quote.get("averageAnalystRating") or quote.get("recommendationKey")
+                )
+                if self._update_consensus(
+                    target=target,
+                    recommendation=recommendation,
+                    current_price=current_price,
+                    source="Yahoo quote lookup",
+                ):
                     did_update = True
 
                 market_cap = self._to_float(quote.get("marketCap"))
@@ -775,6 +998,73 @@ class StockResearchEngine:
                 "profile_source: Yahoo quote/search fallback"
             )
         return did_update
+
+    def _apply_yahoo_insights(self, current_price: float = 0) -> bool:
+        """Fetch analyst recommendation/target from Yahoo's insights endpoint."""
+        try:
+            payload = self._request_get(
+                "https://query2.finance.yahoo.com/ws/insights/v2/finance/insights",
+                include_crumb=True,
+                params={
+                    "symbol": self.ticker,
+                    "reportsCount": 3,
+                    "region": "US",
+                    "lang": "en-US",
+                },
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": "https://finance.yahoo.com/",
+                },
+            ).json()
+
+            result = (payload.get("finance") or {}).get("result")
+            if isinstance(result, list):
+                result = result[0] if result else None
+            if not isinstance(result, dict):
+                error = (payload.get("finance") or {}).get("error")
+                if error:
+                    self.data["diagnostics"].append(
+                        f"yahoo_insights_unavailable: {error}"
+                    )
+                return False
+
+            did_update = False
+            recommendation = result.get("recommendation") or {}
+            target = self._to_float(recommendation.get("targetPrice"))
+            if target <= 0:
+                report_targets = [
+                    self._to_float(report.get("targetPrice"))
+                    for report in (result.get("reports") or [])
+                    if isinstance(report, dict)
+                ]
+                report_targets = [value for value in report_targets if value > 0]
+                target = report_targets[0] if report_targets else 0
+
+            rating = self._consensus_from_rating(recommendation.get("rating"))
+            if rating == "N/A":
+                report_ratings = [
+                    self._consensus_from_rating(report.get("investmentRating"))
+                    for report in (result.get("reports") or [])
+                    if isinstance(report, dict)
+                ]
+                rating = next(
+                    (
+                        report_rating
+                        for report_rating in report_ratings
+                        if report_rating != "N/A"
+                    ),
+                    "N/A",
+                )
+            return self._update_consensus(
+                target=target,
+                recommendation=rating,
+                current_price=current_price,
+                source="Yahoo insights",
+            )
+        except Exception as e:
+            self.data["diagnostics"].append(f"yahoo_insights_unavailable: {e}")
+            return False
 
     def _market_bucket(self, market_cap: float) -> str:
         if market_cap >= 200_000_000_000:
@@ -1030,17 +1320,15 @@ class StockResearchEngine:
 
     def _fetch_yahoo_institutional_flow(self) -> Dict[str, Any]:
         try:
-            response = requests.get(
+            response = self._request_yahoo_get(
                 f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{self.ticker}",
                 params={
                     "modules": "institutionOwnership",
                     "formatted": "false",
                     "corsDomain": "finance.yahoo.com",
                 },
-                timeout=8,
-                headers={"User-Agent": "Mozilla/5.0"},
+                include_crumb=True,
             )
-            response.raise_for_status()
             payload = response.json()
             result = payload.get("quoteSummary", {}).get("result") or []
             ownership = result[0].get("institutionOwnership", {}) if result else {}
@@ -1080,6 +1368,119 @@ class StockResearchEngine:
                 "Yahoo Finance 机构持仓当前不可用；已在 diagnostics 保留详细错误。可配置 ALPHA_VANTAGE_API_KEY 启用备用 13F 数据源。"
             )
 
+    def _request_nasdaq_get(self, url: str, **kwargs) -> requests.Response:
+        headers = kwargs.pop("headers", {}) or {}
+        headers.setdefault(
+            "User-Agent",
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+        )
+        headers.setdefault("Accept", "application/json,text/plain,*/*")
+        headers.setdefault("Accept-Language", "en-US,en;q=0.9")
+        headers.setdefault("Origin", "https://www.nasdaq.com")
+        headers.setdefault(
+            "Referer",
+            f"https://www.nasdaq.com/market-activity/stocks/{self.ticker.lower()}/institutional-holdings",
+        )
+        timeout = kwargs.pop("timeout", 8)
+        response = self.http_session.get(url, headers=headers, timeout=timeout, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def _collect_nasdaq_rows(self, value) -> List[Dict[str, Any]]:
+        rows = []
+        if isinstance(value, dict):
+            nested_rows = value.get("rows")
+            if isinstance(nested_rows, list):
+                rows.extend(item for item in nested_rows if isinstance(item, dict))
+            for item in value.values():
+                rows.extend(self._collect_nasdaq_rows(item))
+        elif isinstance(value, list):
+            rows.extend(item for item in value if isinstance(item, dict))
+        return rows
+
+    def _fetch_nasdaq_institutional_flow(self) -> Dict[str, Any]:
+        try:
+            response = self._request_nasdaq_get(
+                f"https://api.nasdaq.com/api/company/{self.ticker}/institutional-holdings",
+                params={
+                    "limit": 25,
+                    "type": "TOTAL",
+                    "sortColumn": "marketValue",
+                    "sortOrder": "DESC",
+                },
+            )
+            payload = response.json()
+            records = []
+            seen = set()
+            for row in self._collect_nasdaq_rows(payload.get("data", payload)):
+                holder = self._first_value(
+                    row,
+                    [
+                        "ownerName",
+                        "holder",
+                        "holderName",
+                        "institutionName",
+                        "institution",
+                        "name",
+                    ],
+                )
+                if holder == "N/A" or str(holder).lower() in ("total", ""):
+                    continue
+                normalized = self._normalize_institutional_record(
+                    {
+                        "Holder": holder,
+                        "Date Reported": self._first_value(
+                            row, ["date", "reportDate", "report_date", "period"]
+                        ),
+                        "Shares": self._first_value(
+                            row, ["sharesHeld", "shares", "position", "sharesHeldValue"]
+                        ),
+                        "Value": self._first_value(
+                            row, ["marketValue", "value", "market_value", "valueHeld"]
+                        ),
+                        "change": self._first_value(
+                            row,
+                            [
+                                "sharesChange",
+                                "change",
+                                "changeShares",
+                                "change_shares",
+                                "sharesChangeValue",
+                            ],
+                            None,
+                        ),
+                    }
+                )
+                key = (normalized["holder"], normalized["report_date"])
+                if normalized["holder"] != "N/A" and key not in seen:
+                    records.append(normalized)
+                    seen.add(key)
+
+            if not records:
+                return self._empty_institutional_flow(
+                    "Nasdaq institutional-holdings API 未返回可识别机构持仓记录。",
+                    "Nasdaq institutional-holdings API",
+                )
+
+            self.data["diagnostics"].append(
+                "institutional_flow_source: Nasdaq institutional-holdings API"
+            )
+            return self._build_institutional_payload(
+                records,
+                "Nasdaq institutional-holdings API",
+                "免费 Nasdaq institutional-holdings JSON 数据；基于公开机构持仓披露，通常存在季度报告延迟。",
+            )
+        except Exception as e:
+            self.data["diagnostics"].append(f"nasdaq_institutional_flow_unavailable: {e}")
+            return self._empty_institutional_flow(
+                f"Nasdaq institutional-holdings API 请求失败：{e}",
+                "Nasdaq institutional-holdings API",
+            )
+
     def _fetch_alpha_vantage_institutional_flow(self) -> Dict[str, Any]:
         api_key = os.getenv("ALPHA_VANTAGE_API_KEY") or os.getenv(
             "ALPHAVANTAGE_API_KEY"
@@ -1092,7 +1493,7 @@ class StockResearchEngine:
             return base
 
         try:
-            response = requests.get(
+            response = self._request_get(
                 "https://www.alphavantage.co/query",
                 params={
                     "function": "INSTITUTIONAL_HOLDINGS",
@@ -1102,7 +1503,6 @@ class StockResearchEngine:
                 timeout=8,
                 headers={"User-Agent": "stock-research-hub/1.0"},
             )
-            response.raise_for_status()
             payload = response.json()
             if (
                 "Information" in payload
@@ -1159,11 +1559,15 @@ class StockResearchEngine:
         if yahoo_result.get("available"):
             return yahoo_result
 
+        nasdaq_result = self._fetch_nasdaq_institutional_flow()
+        if nasdaq_result.get("available"):
+            return nasdaq_result
+
         fallback = self._fetch_alpha_vantage_institutional_flow()
         if fallback.get("available"):
             return fallback
 
-        return yahoo_result
+        return nasdaq_result if nasdaq_result.get("note") else yahoo_result
 
     def _empty_options_flow(self, note: str) -> Dict[str, Any]:
         return {
@@ -1182,13 +1586,12 @@ class StockResearchEngine:
         params = {"formatted": "false"}
         if expiration is not None:
             params["date"] = expiration
-        response = requests.get(
+        response = self._request_yahoo_get(
             f"https://query2.finance.yahoo.com/v7/finance/options/{self.ticker}",
             params=params,
             timeout=8,
-            headers={"User-Agent": "Mozilla/5.0"},
+            include_crumb=True,
         )
-        response.raise_for_status()
         return response.json()
 
     def _normalize_option_contract(
@@ -1244,7 +1647,104 @@ class StockResearchEngine:
             premium >= 250_000 or ratio >= 2 or (open_interest == 0 and volume >= 1000)
         )
 
-    def _fetch_options_flow(self) -> Dict[str, Any]:
+    def _parse_occ_option_symbol(self, option_symbol: str):
+        match = re.search(r"(\d{6})([CP])(\d{8})$", str(option_symbol))
+        if not match:
+            return None
+        date_part, option_type, strike_part = match.groups()
+        try:
+            expiration = datetime.strptime(date_part, "%y%m%d").strftime("%Y-%m-%d")
+            strike = int(strike_part) / 1000
+            return expiration, option_type, strike
+        except Exception:
+            return None
+
+    def _normalize_cboe_option_contract(self, contract: Dict[str, Any]):
+        parsed = self._parse_occ_option_symbol(contract.get("option", ""))
+        if not parsed:
+            return None
+        expiration, option_type, strike = parsed
+        volume = self._to_float(contract.get("volume"))
+        open_interest = self._to_float(contract.get("open_interest"))
+        last_price = self._to_float(contract.get("last_trade_price"))
+        premium = volume * last_price * 100 if volume and last_price else 0
+        return {
+            "contract_symbol": contract.get("option", "N/A"),
+            "type": "看涨" if option_type == "C" else "看跌",
+            "expiration": expiration,
+            "strike": strike,
+            "last_price": last_price,
+            "volume": volume,
+            "open_interest": open_interest,
+            "volume_oi_ratio": (
+                round(volume / open_interest, 2)
+                if open_interest and open_interest > 0
+                else "N/A"
+            ),
+            "premium_usd": round(premium, 2),
+            "implied_volatility": round(self._to_float(contract.get("iv")) * 100, 2),
+            "last_trade_date": str(contract.get("last_trade_time") or "N/A"),
+        }
+
+    def _fetch_cboe_options_flow(self) -> Dict[str, Any]:
+        try:
+            payload = self._request_get(
+                f"https://cdn.cboe.com/api/global/delayed_quotes/options/{self.ticker}.json",
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                    "Referer": f"https://www.cboe.com/delayed_quotes/{self.ticker}/quote_table",
+                },
+            ).json()
+            options = ((payload.get("data") or {}).get("options") or [])
+            normalized = []
+            expirations = set()
+            bullish_premium = 0
+            bearish_premium = 0
+            for contract in options:
+                if not isinstance(contract, dict):
+                    continue
+                item = self._normalize_cboe_option_contract(contract)
+                if not item:
+                    continue
+                expirations.add(item["expiration"])
+                if item["type"] == "看涨":
+                    bullish_premium += item["premium_usd"]
+                else:
+                    bearish_premium += item["premium_usd"]
+                if self._is_unusual_option(item):
+                    normalized.append(item)
+
+            if not expirations:
+                return self._empty_options_flow("Cboe delayed options API 未返回可识别期权链。")
+
+            normalized.sort(
+                key=lambda item: item["premium_usd"]
+                if isinstance(item["premium_usd"], (int, float))
+                else 0,
+                reverse=True,
+            )
+            self.data["diagnostics"].append("options_flow_source: Cboe delayed options API")
+            return {
+                "available": True,
+                "source": "Cboe delayed options API",
+                "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
+                "expirations_analyzed": sorted(expirations)[:8],
+                "bullish_premium_proxy_usd": round(bullish_premium, 2),
+                "bearish_premium_proxy_usd": round(bearish_premium, 2),
+                "put_call_premium_ratio": (
+                    round(bearish_premium / bullish_premium, 2)
+                    if bullish_premium
+                    else "N/A"
+                ),
+                "unusual_contracts": normalized[:8],
+                "note": "基于 Cboe 免费延迟期权链 JSON 的成交量、未平仓量和权利金筛选；通常约 15 分钟延迟。",
+            }
+        except Exception as e:
+            self.data["diagnostics"].append(f"cboe_options_flow_unavailable: {e}")
+            return self._empty_options_flow(f"Cboe delayed options API 请求失败：{e}")
+
+    def _fetch_yahoo_options_flow(self) -> Dict[str, Any]:
         try:
             first_payload = self._fetch_yahoo_options_payload()
             result = first_payload.get("optionChain", {}).get("result") or []
@@ -1346,10 +1846,21 @@ class StockResearchEngine:
                 "note": "基于 Yahoo Finance 期权链的成交量、未平仓量和权利金筛选；不包含买卖方向或机构身份。",
             }
         except Exception as e:
-            self.data["diagnostics"].append(f"options_flow_unavailable: {e}")
+            self.data["diagnostics"].append(f"yahoo_options_flow_unavailable: {e}")
             return self._empty_options_flow(
                 "Yahoo Finance 期权链当前不可用；已在 diagnostics 保留详细错误，页面将继续展示其它可用数据。"
             )
+
+    def _fetch_options_flow(self) -> Dict[str, Any]:
+        yahoo_result = self._fetch_yahoo_options_flow()
+        if yahoo_result.get("available"):
+            return yahoo_result
+
+        cboe_result = self._fetch_cboe_options_flow()
+        if cboe_result.get("available"):
+            return cboe_result
+
+        return cboe_result
 
     def _flow_intensity(self, change_pct: float, volume_ratio: float) -> str:
         if change_pct > 0 and volume_ratio >= 1.2:
@@ -1698,21 +2209,16 @@ class StockResearchEngine:
                         else "N/A"
                     )
 
-                    target = info.get("targetMeanPrice")
-                    if target and current_price > 0:
-                        self.data["consensus"].update(
-                            {
-                                "recommendation": str(
-                                    info.get("recommendationKey", "N/A")
-                                ).upper(),
-                                "target_price": round(float(target), 2),
-                                "upside_potential": round(
-                                    ((float(target) - current_price) / current_price)
-                                    * 100,
-                                    1,
-                                ),
-                            }
-                        )
+                    target = self._to_float(info.get("targetMeanPrice"))
+                    recommendation = self._consensus_from_rating(
+                        info.get("recommendationKey")
+                    )
+                    self._update_consensus(
+                        target=target,
+                        recommendation=recommendation,
+                        current_price=current_price,
+                        source="Yahoo yfinance info fallback",
+                    )
 
                     # Capital Flow Analysis
                     market_cap = self._to_float(info.get("marketCap"))
@@ -1731,30 +2237,27 @@ class StockResearchEngine:
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
 
-            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            missing_profile_fields = (
-                not has_profile
-                or self.data["capital_flow"].get("market_cap") == "N/A"
-                or self.data["price"].get("pe_ratio") == "N/A"
-                or self.data["price"].get("pb_ratio") == "N/A"
-            )
-            if missing_profile_fields:
-                self._apply_yahoo_quote_summary(current_price)
-                current_price = self._to_float(self.data["price"].get("current_price"))
+            self._apply_yahoo_quote_summary(current_price)
+            current_price = self._to_float(self.data["price"].get("current_price"))
 
-            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            missing_profile_fields = (
-                not has_profile
-                or self.data["capital_flow"].get("market_cap") == "N/A"
-                or self.data["price"].get("pe_ratio") == "N/A"
-                or self.data["price"].get("pb_ratio") == "N/A"
-            )
-            if missing_profile_fields:
+            if self._has_missing_enrichment_fields():
                 self._apply_yahoo_quote_lookup(current_price)
                 current_price = self._to_float(self.data["price"].get("current_price"))
 
+            consensus_source = self.data["consensus"].get("source")
+            if (
+                self.data["consensus"].get("target_price") == "N/A"
+                or self.data["consensus"].get("recommendation") == "N/A"
+                or consensus_source in ("N/A", "Yahoo yfinance info fallback")
+            ):
+                self._apply_yahoo_insights(current_price)
+
             has_profile = self.data["company_name"] not in ("N/A", self.ticker)
-            if not has_profile or self.data["capital_flow"].get("market_cap") == "N/A":
+            if (
+                not has_profile
+                or self.data["capital_flow"].get("market_cap") == "N/A"
+                or self.data["consensus"].get("target_price") == "N/A"
+            ):
                 self._apply_alpha_vantage_overview()
 
             if not self.data["capital_flow"].get("market_flow_details"):
@@ -1910,15 +2413,38 @@ class StockResearchEngine:
             print(f"Error in research: {e}", file=sys.stderr)
             return self.data
 
+    def _json_safe(self, value):
+        """Convert provider/pandas values into strict JSON-safe primitives."""
+        if isinstance(value, dict):
+            return {str(key): self._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._json_safe(item) for item in value]
+        if isinstance(value, (datetime, pd.Timestamp)):
+            if pd.isna(value):
+                return "N/A"
+            return value.isoformat()
+        if value is pd.NA or value is pd.NaT:
+            return "N/A"
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, float):
+            return value if np.isfinite(value) else "N/A"
+        return value
+
     def output_json(self):
         def serialize(obj):
-            if hasattr(obj, "item"):
-                return obj.item()
             if isinstance(obj, (datetime, pd.Timestamp)):
-                return obj.isoformat()
+                return self._json_safe(obj)
+            if isinstance(obj, np.generic):
+                return self._json_safe(obj)
             return str(obj)
 
-        print(json.dumps(self.data, ensure_ascii=False, default=serialize))
+        safe_data = self._json_safe(self.data)
+        print(
+            json.dumps(
+                safe_data, ensure_ascii=False, default=serialize, allow_nan=False
+            )
+        )
 
 
 if __name__ == "__main__":

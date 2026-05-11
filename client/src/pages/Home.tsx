@@ -266,6 +266,9 @@ export default function Home() {
         try {
           const errorPayload = (await response.json()) as StockResearchError;
           message = errorPayload.details || errorPayload.error || message;
+          if (errorPayload.diagnostics?.length) {
+            message = `${message} ${errorPayload.diagnostics[0]}`;
+          }
         } catch {
           // Keep the generic message when the server does not return JSON.
         }
@@ -917,7 +920,7 @@ export default function Home() {
                         >
                           {data.capital_flow.institutional_flow?.available
                             ? "已连接真实 API"
-                            : "等待 Yahoo 数据"}
+                            : "等待免费 13F API"}
                         </Badge>
                       </div>
                       <p className="text-xs text-slate-500 mb-4">
@@ -1006,8 +1009,9 @@ export default function Home() {
                         </div>
                       ) : (
                         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-                          Yahoo Finance 暂未返回机构持仓数据；如果需要备用真实
-                          13F 数据源，可以在部署环境变量里配置{" "}
+                          当前免费机构持仓源（Yahoo / Nasdaq）暂未返回可展示记录；
+                          页面会继续尝试下一个免费源。如果需要额外备用 13F
+                          数据源，可以在部署环境变量里配置{" "}
                           <code className="font-mono text-xs bg-white px-1 py-0.5 rounded">
                             ALPHA_VANTAGE_API_KEY
                           </code>
@@ -1037,8 +1041,8 @@ export default function Home() {
                           }
                         >
                           {data.capital_flow.options_flow?.available
-                            ? "已连接 Yahoo 期权链"
-                            : "等待 Yahoo 期权链"}
+                            ? "已连接期权链 API"
+                            : "等待 Cboe/Yahoo 期权链"}
                         </Badge>
                       </div>
                       <p className="text-xs text-slate-500 mb-4">
@@ -1127,8 +1131,7 @@ export default function Home() {
                         </div>
                       ) : (
                         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-                          当前没有筛选出异常期权合约，或 Yahoo Finance
-                          暂未返回期权链数据。
+                          当前没有筛选出异常期权合约，或免费期权链数据源暂未返回可展示合约。
                         </div>
                       )}
                     </div>
