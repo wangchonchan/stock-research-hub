@@ -44,6 +44,8 @@ class StockResearchEngine:
                 "recommendation": "N/A",
                 "target_price": "N/A",
                 "upside_potential": "N/A",
+                "source": "N/A",
+                "updated_at": "N/A",
             },
             "fundamentals": {
                 "quarter": "N/A",
@@ -711,6 +713,67 @@ class StockResearchEngine:
             rating = rating.split(" - ", 1)[1]
         return rating.upper() if rating else "N/A"
 
+    def _consensus_from_trend(self, trend: Dict[str, Any]) -> str:
+        rows = trend.get("trend") if isinstance(trend, dict) else None
+        if not isinstance(rows, list) or not rows:
+            return "N/A"
+
+        current = next(
+            (row for row in rows if isinstance(row, dict) and row.get("period") == "0m"),
+            rows[0],
+        )
+        if not isinstance(current, dict):
+            return "N/A"
+
+        strong_buy = self._to_float(current.get("strongBuy"))
+        buy = self._to_float(current.get("buy"))
+        hold = self._to_float(current.get("hold"))
+        sell = self._to_float(current.get("sell"))
+        strong_sell = self._to_float(current.get("strongSell"))
+        total = strong_buy + buy + hold + sell + strong_sell
+        if total <= 0:
+            return "N/A"
+
+        score = ((strong_buy * 2) + buy - sell - (strong_sell * 2)) / total
+        if score >= 1.1:
+            return "STRONG BUY"
+        if score >= 0.35:
+            return "BUY"
+        if score <= -1.1:
+            return "STRONG SELL"
+        if score <= -0.35:
+            return "SELL"
+        return "HOLD"
+
+    def _update_consensus(
+        self,
+        *,
+        target: float = 0,
+        recommendation: str = "N/A",
+        current_price: float = 0,
+        source: str,
+    ) -> bool:
+        did_update = False
+        if target > 0:
+            self.data["consensus"]["target_price"] = round(target, 2)
+            if current_price > 0:
+                self.data["consensus"]["upside_potential"] = round(
+                    ((target - current_price) / current_price) * 100, 1
+                )
+            did_update = True
+
+        if recommendation != "N/A":
+            self.data["consensus"]["recommendation"] = recommendation
+            did_update = True
+
+        if did_update:
+            self.data["consensus"]["source"] = source
+            self.data["consensus"]["updated_at"] = datetime.now(self.hkt).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            self.data["diagnostics"].append(f"consensus_source: {source}")
+        return did_update
+
     def _has_missing_enrichment_fields(self) -> bool:
         has_profile = self.data["company_name"] not in ("N/A", self.ticker)
         return (
@@ -731,6 +794,7 @@ class StockResearchEngine:
                     "defaultKeyStatistics",
                     "financialData",
                     "summaryDetail",
+                    "recommendationTrend",
                 ]
             )
             payload = self._request_get(
@@ -757,6 +821,7 @@ class StockResearchEngine:
             stats = result.get("defaultKeyStatistics") or {}
             financial = result.get("financialData") or {}
             detail = result.get("summaryDetail") or {}
+            recommendation_trend = result.get("recommendationTrend") or {}
 
             self.data["company_name"] = self._raw_value(
                 price.get("longName"), self.data["company_name"]
@@ -787,15 +852,17 @@ class StockResearchEngine:
                 self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
 
             target = self._to_float(financial.get("targetMeanPrice"))
-            if target > 0:
-                self.data["consensus"]["target_price"] = round(target, 2)
-                if current_price > 0:
-                    self.data["consensus"]["upside_potential"] = round(
-                        ((target - current_price) / current_price) * 100, 1
-                    )
-            recommendation = self._raw_value(financial.get("recommendationKey"))
-            if recommendation != "N/A":
-                self.data["consensus"]["recommendation"] = str(recommendation).upper()
+            recommendation = self._consensus_from_trend(recommendation_trend)
+            if recommendation == "N/A":
+                recommendation = self._consensus_from_rating(
+                    financial.get("recommendationKey")
+                )
+            self._update_consensus(
+                target=target,
+                recommendation=recommendation,
+                current_price=current_price,
+                source="Yahoo quoteSummary financialData/recommendationTrend",
+            )
 
             market_cap = self._to_float(price.get("marketCap"))
             volume = self._to_float(price.get("regularMarketVolume"))
@@ -873,19 +940,15 @@ class StockResearchEngine:
                     quote.get("targetMeanPrice"),
                     self._to_float(quote.get("targetMedianPrice")),
                 )
-                if target > 0:
-                    self.data["consensus"]["target_price"] = round(target, 2)
-                    if current_price > 0:
-                        self.data["consensus"]["upside_potential"] = round(
-                            ((target - current_price) / current_price) * 100, 1
-                        )
-                    did_update = True
-
                 recommendation = self._consensus_from_rating(
                     quote.get("averageAnalystRating") or quote.get("recommendationKey")
                 )
-                if recommendation != "N/A":
-                    self.data["consensus"]["recommendation"] = recommendation
+                if self._update_consensus(
+                    target=target,
+                    recommendation=recommendation,
+                    current_price=current_price,
+                    source="Yahoo quote lookup",
+                ):
                     did_update = True
 
                 market_cap = self._to_float(quote.get("marketCap"))
@@ -970,14 +1033,6 @@ class StockResearchEngine:
                 report_targets = [value for value in report_targets if value > 0]
                 target = report_targets[0] if report_targets else 0
 
-            if target > 0:
-                self.data["consensus"]["target_price"] = round(target, 2)
-                if current_price > 0:
-                    self.data["consensus"]["upside_potential"] = round(
-                        ((target - current_price) / current_price) * 100, 1
-                    )
-                did_update = True
-
             rating = self._consensus_from_rating(recommendation.get("rating"))
             if rating == "N/A":
                 report_ratings = [
@@ -993,13 +1048,12 @@ class StockResearchEngine:
                     ),
                     "N/A",
                 )
-            if rating != "N/A":
-                self.data["consensus"]["recommendation"] = rating
-                did_update = True
-
-            if did_update:
-                self.data["diagnostics"].append("consensus_source: Yahoo insights")
-            return did_update
+            return self._update_consensus(
+                target=target,
+                recommendation=rating,
+                current_price=current_price,
+                source="Yahoo insights",
+            )
         except Exception as e:
             self.data["diagnostics"].append(f"yahoo_insights_unavailable: {e}")
             return False
@@ -1922,21 +1976,16 @@ class StockResearchEngine:
                         else "N/A"
                     )
 
-                    target = info.get("targetMeanPrice")
-                    if target and current_price > 0:
-                        self.data["consensus"].update(
-                            {
-                                "recommendation": str(
-                                    info.get("recommendationKey", "N/A")
-                                ).upper(),
-                                "target_price": round(float(target), 2),
-                                "upside_potential": round(
-                                    ((float(target) - current_price) / current_price)
-                                    * 100,
-                                    1,
-                                ),
-                            }
-                        )
+                    target = self._to_float(info.get("targetMeanPrice"))
+                    recommendation = self._consensus_from_rating(
+                        info.get("recommendationKey")
+                    )
+                    self._update_consensus(
+                        target=target,
+                        recommendation=recommendation,
+                        current_price=current_price,
+                        source="Yahoo yfinance info fallback",
+                    )
 
                     # Capital Flow Analysis
                     market_cap = self._to_float(info.get("marketCap"))
@@ -1955,17 +2004,18 @@ class StockResearchEngine:
             except Exception as e:
                 self.data["diagnostics"].append(f"profile_unavailable: {e}")
 
-            if self._has_missing_enrichment_fields():
-                self._apply_yahoo_quote_summary(current_price)
-                current_price = self._to_float(self.data["price"].get("current_price"))
+            self._apply_yahoo_quote_summary(current_price)
+            current_price = self._to_float(self.data["price"].get("current_price"))
 
             if self._has_missing_enrichment_fields():
                 self._apply_yahoo_quote_lookup(current_price)
                 current_price = self._to_float(self.data["price"].get("current_price"))
 
+            consensus_source = self.data["consensus"].get("source")
             if (
                 self.data["consensus"].get("target_price") == "N/A"
                 or self.data["consensus"].get("recommendation") == "N/A"
+                or consensus_source in ("N/A", "Yahoo yfinance info fallback")
             ):
                 self._apply_yahoo_insights(current_price)
 
