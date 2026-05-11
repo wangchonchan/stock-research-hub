@@ -1,5 +1,6 @@
-import math
 #!/usr/bin/env python3
+import math
+
 """
 Stock Research Engine v3.2 - Robust Data Fetching & Comprehensive Capital Flow Analysis
 """
@@ -14,6 +15,7 @@ import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 import requests
+from requests import RequestException
 import yfinance as yf
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -259,14 +261,45 @@ class StockResearchEngine:
     def _request_get(self, url: str, **kwargs) -> requests.Response:
         """Run a bounded HTTP GET without letting provider calls hang the API."""
         headers = kwargs.pop("headers", {}) or {}
-        headers.setdefault("User-Agent", "stock-research-hub/1.0 Mozilla/5.0")
+        headers.setdefault(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36 stock-research-hub/1.0",
+        )
+        headers.setdefault("Accept", "application/json,text/csv,text/plain,*/*")
         timeout = kwargs.pop("timeout", 8)
-        response = requests.get(url, headers=headers, timeout=timeout, **kwargs)
-        response.raise_for_status()
-        return response
+
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout, **kwargs)
+            response.raise_for_status()
+            return response
+        except RequestException as first_error:
+            # Some deployment networks expose proxy variables that reject finance
+            # hosts with HTTP 403. Operators can opt into one direct retry by
+            # setting STOCK_RESEARCH_DIRECT_HTTP_RETRY=1.
+            if os.getenv("STOCK_RESEARCH_DIRECT_HTTP_RETRY") != "1":
+                raise
+            session = requests.Session()
+            session.trust_env = False
+            retry_timeout = (
+                min(float(timeout), 2.0) if isinstance(timeout, (int, float)) else 2.0
+            )
+            try:
+                response = session.get(
+                    url, headers=headers, timeout=retry_timeout, **kwargs
+                )
+                response.raise_for_status()
+                self.data["diagnostics"].append("http_retry: direct_no_proxy_success")
+                return response
+            except RequestException:
+                raise first_error
 
     def _get_alpha_vantage_key(self) -> Optional[str]:
         return os.getenv("ALPHA_VANTAGE_API_KEY") or os.getenv("ALPHAVANTAGE_API_KEY")
+
+    def _get_fmp_key(self) -> Optional[str]:
+        return os.getenv("FMP_API_KEY") or os.getenv("FINANCIAL_MODELING_PREP_API_KEY")
 
     def _fetch_alpha_vantage_global_quote(self) -> Optional[Dict[str, Any]]:
         api_key = self._get_alpha_vantage_key()
@@ -327,6 +360,112 @@ class StockResearchEngine:
                 )
         self.data["diagnostics"].append("price_source: Alpha Vantage GLOBAL_QUOTE")
         return True
+
+    def _fetch_fmp_json(self, path: str, params: Optional[Dict[str, Any]] = None):
+        api_key = self._get_fmp_key()
+        if not api_key:
+            return None
+        request_params = {**(params or {}), "apikey": api_key}
+        try:
+            return self._request_get(
+                f"https://financialmodelingprep.com/api/v3/{path.lstrip('/')}",
+                params=request_params,
+            ).json()
+        except Exception as e:
+            self.data["diagnostics"].append(f"fmp_unavailable: {path}: {e}")
+            return None
+
+    def _apply_fmp_quote_profile(self, current_price: float = 0) -> bool:
+        did_update = False
+
+        quote_payload = self._fetch_fmp_json(f"quote/{self.ticker}")
+        quote = (
+            quote_payload[0]
+            if isinstance(quote_payload, list) and quote_payload
+            else {}
+        )
+        if quote:
+            price = self._to_float(quote.get("price"))
+            if price > 0:
+                current_price = price
+                self.data["price"].update(
+                    {
+                        "current_price": round(price, 3),
+                        "change": round(self._to_float(quote.get("change")), 3),
+                        "change_percent": round(
+                            self._to_float(quote.get("changesPercentage")), 2
+                        ),
+                    }
+                )
+                did_update = True
+
+            name = quote.get("name")
+            if name:
+                self.data["company_name"] = name
+                did_update = True
+
+            pe_ratio = self._to_float(quote.get("pe"))
+            if pe_ratio > 0:
+                self.data["price"]["pe_ratio"] = round(pe_ratio, 2)
+                did_update = True
+
+            market_cap = self._to_float(quote.get("marketCap"))
+            volume = self._to_float(quote.get("volume"))
+            avg_vol = self._to_float(quote.get("avgVolume"))
+            if market_cap > 0 or volume > 0 or avg_vol > 0:
+                self._update_capital_flow_snapshot(
+                    market_cap, volume, avg_vol, current_price
+                )
+                did_update = True
+
+        profile_payload = self._fetch_fmp_json(f"profile/{self.ticker}")
+        profile = (
+            profile_payload[0]
+            if isinstance(profile_payload, list) and profile_payload
+            else {}
+        )
+        if profile:
+            if profile.get("companyName"):
+                self.data["company_name"] = profile["companyName"]
+                did_update = True
+            if profile.get("description"):
+                self.data["description"] = self._summarize_description(
+                    profile["description"], 30
+                )
+                did_update = True
+            pb_ratio = self._to_float(profile.get("priceToBookRatio"))
+            if pb_ratio > 0:
+                self.data["price"]["pb_ratio"] = round(pb_ratio, 2)
+                did_update = True
+
+        if did_update:
+            self.data["diagnostics"].append("profile_source: Financial Modeling Prep")
+        return did_update
+
+    def _fetch_fmp_daily_history(self, days: int = 260) -> pd.DataFrame:
+        payload = self._fetch_fmp_json(
+            f"historical-price-full/{self.ticker}", {"timeseries": days}
+        )
+        rows = payload.get("historical") if isinstance(payload, dict) else None
+        if not rows:
+            return pd.DataFrame()
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "Date": row.get("date"),
+                    "Open": row.get("open"),
+                    "High": row.get("high"),
+                    "Low": row.get("low"),
+                    "Close": row.get("close"),
+                    "Volume": row.get("volume"),
+                }
+                for row in rows
+            ]
+        )
+        frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+        frame = frame.dropna(subset=["Date"]).set_index("Date")
+        return self._normalize_history_frame(frame, days)
 
     def _apply_stooq_quote_fallback(self) -> bool:
         # Stooq uses .US suffix for U.S. equities and exposes a small CSV quote API.
@@ -545,6 +684,10 @@ class StockResearchEngine:
             (
                 "Stooq delayed daily CSV",
                 lambda: self._fetch_stooq_history(self.ticker, days=260),
+            ),
+            (
+                "Financial Modeling Prep historical-price-full",
+                lambda: self._fetch_fmp_daily_history(days=260),
             ),
             (
                 "Alpha Vantage TIME_SERIES_DAILY_ADJUSTED",
@@ -1073,10 +1216,8 @@ class StockResearchEngine:
             "top_decreases": decreases[:5],
         }
 
-    
     def _fetch_yahoo_institutional_flow(self) -> Dict[str, Any]:
         try:
-            import yfinance as yf
             t = yf.Ticker(self.ticker)
             ih = t.institutional_holders
             if ih is None or ih.empty:
@@ -1088,7 +1229,9 @@ class StockResearchEngine:
                 "真实机构持仓数据；来自 yfinance (Yahoo Finance)；存在报告延迟。",
             )
         except Exception as e:
-            self.data["diagnostics"].append(f"yfinance_institutional_flow_unavailable: {e}")
+            self.data["diagnostics"].append(
+                f"yfinance_institutional_flow_unavailable: {e}"
+            )
             return self._empty_institutional_flow(f"yfinance 机构持仓不可用: {e}")
 
     def _fetch_alpha_vantage_institutional_flow(self) -> Dict[str, Any]:
@@ -1122,14 +1265,15 @@ class StockResearchEngine:
         params = {"formatted": "false"}
         if expiration is not None:
             params["date"] = expiration
-        response = requests.get(
+        return self._request_get(
             f"https://query2.finance.yahoo.com/v7/finance/options/{self.ticker}",
             params=params,
             timeout=8,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        response.raise_for_status()
-        return response.json()
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://finance.yahoo.com/",
+            },
+        ).json()
 
     def _normalize_option_contract(
         self, contract: Dict[str, Any], option_type: str, expiration_label: str
@@ -1184,43 +1328,142 @@ class StockResearchEngine:
             premium >= 250_000 or ratio >= 2 or (open_interest == 0 and volume >= 1000)
         )
 
-    
+    def _build_options_flow_payload(
+        self,
+        unusual_contracts: List[Dict[str, Any]],
+        expirations_analyzed: List[str],
+        bullish_premium: float,
+        bearish_premium: float,
+        source: str,
+        note: str,
+    ) -> Dict[str, Any]:
+        if not expirations_analyzed:
+            return self._empty_options_flow(f"{source} 未返回可分析的期权链。")
+
+        unusual_contracts.sort(
+            key=lambda x: (
+                x["premium_usd"] if isinstance(x["premium_usd"], (int, float)) else 0
+            ),
+            reverse=True,
+        )
+        return {
+            "available": True,
+            "source": source,
+            "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
+            "expirations_analyzed": expirations_analyzed,
+            "bullish_premium_proxy_usd": (
+                round(bullish_premium, 2) if not math.isnan(bullish_premium) else 0
+            ),
+            "bearish_premium_proxy_usd": (
+                round(bearish_premium, 2) if not math.isnan(bearish_premium) else 0
+            ),
+            "put_call_premium_ratio": (
+                round(bearish_premium / bullish_premium, 2)
+                if bullish_premium > 0
+                else "N/A"
+            ),
+            "unusual_contracts": unusual_contracts[:8],
+            "note": note,
+        }
+
+    def _fetch_options_flow_via_yahoo_api(self) -> Dict[str, Any]:
+        try:
+            initial_payload = self._fetch_yahoo_options_payload()
+            option_result = (
+                (initial_payload.get("optionChain", {}).get("result") or [None])[0]
+                if isinstance(initial_payload, dict)
+                else None
+            )
+            expirations = (option_result or {}).get("expirationDates") or []
+            if not expirations:
+                return self._empty_options_flow(
+                    "Yahoo options API 未返回可用期权到期日。"
+                )
+
+            unusual_contracts = []
+            expirations_analyzed = []
+            bullish_premium = 0.0
+            bearish_premium = 0.0
+            for expiration in expirations[:3]:
+                payload = self._fetch_yahoo_options_payload(expiration)
+                result = (payload.get("optionChain", {}).get("result") or [None])[0]
+                chain = ((result or {}).get("options") or [None])[0]
+                if not chain:
+                    continue
+
+                expiration_label = datetime.fromtimestamp(expiration).strftime(
+                    "%Y-%m-%d"
+                )
+                expirations_analyzed.append(expiration_label)
+                for option_type, contracts in [
+                    ("看涨", chain.get("calls") or []),
+                    ("看跌", chain.get("puts") or []),
+                ]:
+                    for contract in contracts:
+                        item = self._normalize_option_contract(
+                            contract, option_type, expiration_label
+                        )
+                        premium = (
+                            item["premium_usd"]
+                            if isinstance(item["premium_usd"], (int, float))
+                            else 0
+                        )
+                        if option_type == "看涨":
+                            bullish_premium += premium
+                        else:
+                            bearish_premium += premium
+                        if self._is_unusual_option(item):
+                            unusual_contracts.append(item)
+
+            return self._build_options_flow_payload(
+                unusual_contracts,
+                expirations_analyzed,
+                bullish_premium,
+                bearish_premium,
+                "Yahoo Finance options API",
+                "基于 Yahoo Finance 期权 API 筛选的异常成交合约。",
+            )
+        except Exception as e:
+            self.data["diagnostics"].append(f"yahoo_options_api_unavailable: {e}")
+            return self._empty_options_flow(f"Yahoo 期权 API 不可用: {e}")
+
     def _fetch_options_flow(self) -> Dict[str, Any]:
         try:
-            import yfinance as yf
             t = yf.Ticker(self.ticker)
             expirations = t.options
             if not expirations:
                 return self._empty_options_flow("yfinance 未返回可用期权到期日。")
-            
+
             expirations_to_check = expirations[:3]
             unusual_contracts = []
             expirations_analyzed = []
             bullish_premium = 0
             bearish_premium = 0
-            
+
             for exp in expirations_to_check:
                 try:
                     chain = t.option_chain(exp)
                 except:
                     continue
                 expirations_analyzed.append(exp)
-                
+
                 for option_type, df in [("看涨", chain.calls), ("看跌", chain.puts)]:
-                    if df is None or df.empty: continue
+                    if df is None or df.empty:
+                        continue
                     for _, row in df.iterrows():
                         vol = self._to_float(row.get("volume"))
                         oi = self._to_float(row.get("openInterest"))
                         lp = self._to_float(row.get("lastPrice"))
-                        
+
                         vol = self._to_float(row.get("volume"), 0)
                         lp = self._to_float(row.get("lastPrice"), 0)
                         prem = vol * lp * 100
 
-                        
-                        if option_type == "看涨": bullish_premium += prem
-                        else: bearish_premium += prem
-                        
+                        if option_type == "看涨":
+                            bullish_premium += prem
+                        else:
+                            bearish_premium += prem
+
                         item = {
                             "contract_symbol": str(row.get("contractSymbol")),
                             "type": option_type,
@@ -1229,29 +1472,33 @@ class StockResearchEngine:
                             "last_price": lp,
                             "volume": vol,
                             "open_interest": oi,
-                            "volume_oi_ratio": round(vol/oi, 2) if oi > 0 else "N/A",
+                            "volume_oi_ratio": round(vol / oi, 2) if oi > 0 else "N/A",
                             "premium_usd": round(prem, 2),
-                            "implied_volatility": round(self._to_float(row.get("impliedVolatility")) * 100, 2),
+                            "implied_volatility": round(
+                                self._to_float(row.get("impliedVolatility")) * 100, 2
+                            ),
                             "last_trade_date": str(row.get("lastTradeDate")),
                         }
                         if self._is_unusual_option(item):
                             unusual_contracts.append(item)
-            
-            unusual_contracts.sort(key=lambda x: x["premium_usd"] if isinstance(x["premium_usd"], (int, float)) else 0, reverse=True)
-            return {
-                "available": True,
-                "source": "yfinance options chain",
-                "as_of": datetime.now(self.hkt).strftime("%Y-%m-%d %H:%M:%S"),
-                "expirations_analyzed": expirations_analyzed,
-                "bullish_premium_proxy_usd": round(bullish_premium, 2) if not math.isnan(bullish_premium) else 0,
-                "bearish_premium_proxy_usd": round(bearish_premium, 2) if not math.isnan(bearish_premium) else 0,
-                "put_call_premium_ratio": round(bearish_premium / bullish_premium, 2) if bullish_premium > 0 else "N/A",
-                "unusual_contracts": unusual_contracts[:8],
-                "note": "基于 yfinance 期权链筛选的异常成交合约。",
-            }
+
+            if not expirations_analyzed:
+                self.data["diagnostics"].append(
+                    "yfinance_options_flow_unavailable: no chains analyzed"
+                )
+                return self._fetch_options_flow_via_yahoo_api()
+
+            return self._build_options_flow_payload(
+                unusual_contracts,
+                expirations_analyzed,
+                bullish_premium,
+                bearish_premium,
+                "yfinance options chain",
+                "基于 yfinance 期权链筛选的异常成交合约。",
+            )
         except Exception as e:
             self.data["diagnostics"].append(f"yfinance_options_flow_unavailable: {e}")
-            return self._empty_options_flow(f"yfinance 期权链不可用: {e}")
+            return self._fetch_options_flow_via_yahoo_api()
 
     def _flow_intensity(self, change_pct: float, volume_ratio: float) -> str:
         if change_pct > 0 and volume_ratio >= 1.2:
@@ -1573,6 +1820,7 @@ class StockResearchEngine:
             if current_price <= 0:
                 if (
                     self._apply_stooq_quote_fallback()
+                    or self._apply_fmp_quote_profile(current_price)
                     or self._apply_alpha_vantage_global_quote()
                 ):
                     current_price = self._to_float(
@@ -1653,6 +1901,17 @@ class StockResearchEngine:
             )
             if missing_profile_fields:
                 self._apply_yahoo_quote_lookup(current_price)
+                current_price = self._to_float(self.data["price"].get("current_price"))
+
+            has_profile = self.data["company_name"] not in ("N/A", self.ticker)
+            missing_profile_fields = (
+                not has_profile
+                or self.data["capital_flow"].get("market_cap") == "N/A"
+                or self.data["price"].get("pe_ratio") == "N/A"
+                or self.data["price"].get("pb_ratio") == "N/A"
+            )
+            if missing_profile_fields:
+                self._apply_fmp_quote_profile(current_price)
                 current_price = self._to_float(self.data["price"].get("current_price"))
 
             has_profile = self.data["company_name"] not in ("N/A", self.ticker)
