@@ -243,6 +243,10 @@ export default function Home() {
   }, [history]);
 
   const compareItems = history.filter(item => compareIds.includes(item.id));
+  const visibleDiagnostics = Array.from(new Set(data?.diagnostics ?? [])).slice(
+    0,
+    8
+  );
 
   const formatLargeNumber = (num: number | string) => {
     if (typeof num !== "number" || isNaN(num)) return num;
@@ -506,6 +510,31 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+
+                {visibleDiagnostics.length > 0 && (
+                  <Card className="border-amber-200 bg-amber-50 shadow-sm print:hidden">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-sm font-bold text-amber-900">
+                        <AlertCircle size={16} />
+                        API 连接诊断
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-xs text-amber-900/80">
+                      <p>
+                        部分上游数据源可能暂时不可用，系统已按 Yahoo → Stooq →
+                        FMP → Alpha Vantage 的顺序自动降级；可配置 FMP_API_KEY
+                        或 ALPHA_VANTAGE_API_KEY 提升备用数据覆盖率。
+                      </p>
+                      <ul className="list-disc space-y-1 pl-5">
+                        {visibleDiagnostics.map(item => (
+                          <li key={item} className="break-words">
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* Charts Section */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
