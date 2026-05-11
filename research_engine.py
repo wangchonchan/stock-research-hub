@@ -1910,15 +1910,38 @@ class StockResearchEngine:
             print(f"Error in research: {e}", file=sys.stderr)
             return self.data
 
+    def _json_safe(self, value):
+        """Convert provider/pandas values into strict JSON-safe primitives."""
+        if isinstance(value, dict):
+            return {str(key): self._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._json_safe(item) for item in value]
+        if isinstance(value, (datetime, pd.Timestamp)):
+            if pd.isna(value):
+                return "N/A"
+            return value.isoformat()
+        if value is pd.NA or value is pd.NaT:
+            return "N/A"
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, float):
+            return value if np.isfinite(value) else "N/A"
+        return value
+
     def output_json(self):
         def serialize(obj):
-            if hasattr(obj, "item"):
-                return obj.item()
             if isinstance(obj, (datetime, pd.Timestamp)):
-                return obj.isoformat()
+                return self._json_safe(obj)
+            if isinstance(obj, np.generic):
+                return self._json_safe(obj)
             return str(obj)
 
-        print(json.dumps(self.data, ensure_ascii=False, default=serialize))
+        safe_data = self._json_safe(self.data)
+        print(
+            json.dumps(
+                safe_data, ensure_ascii=False, default=serialize, allow_nan=False
+            )
+        )
 
 
 if __name__ == "__main__":
